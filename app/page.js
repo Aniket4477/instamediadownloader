@@ -1,33 +1,78 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 const TABS = [
-  { id: 'auto', label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram link or @username...' },
-  { id: 'reel', label: '🎬 Reel / Video', placeholder: 'Paste Instagram Reel or Video URL (e.g. https://www.instagram.com/reel/...)' },
-  { id: 'post', label: '🖼️ Post / Carousel', placeholder: 'Paste Instagram Post or Carousel URL (e.g. https://www.instagram.com/p/...)' },
-  { id: 'story', label: '📖 Story', placeholder: 'Paste public @username or Story URL...' },
+  { id: 'reel', label: 'Reel', placeholder: 'Paste Instagram Reel link...' },
+  { id: 'video', label: 'Video', placeholder: 'Paste Instagram Video link...' },
+  { id: 'post', label: 'Post', placeholder: 'Paste Instagram Post or Carousel link...' },
+  { id: 'story', label: 'Story', placeholder: 'Paste public @username or Story URL...' },
+];
+
+const FAQS = [
+  {
+    q: 'Do I need an Instagram account?',
+    a: 'No. InstaDown only downloads public media and never requires you to log into Instagram, register, or provide any credentials.',
+  },
+  {
+    q: 'Can I download private posts?',
+    a: 'No. InstaDown is built strictly for publicly available Instagram posts, Reels, and Stories. Private accounts and close friends stories cannot and will not be accessed.',
+  },
+  {
+    q: 'Which Instagram content is supported?',
+    a: 'We support public Reels, IGTV/feed video posts, single photo posts, multi-photo carousels, and active 24-hour public Stories.',
+  },
+  {
+    q: 'Do Stories need to be currently active?',
+    a: 'Yes. Instagram Stories are temporary and expire after 24 hours. Stories must be actively live on the public profile at the time of download.',
+  },
+  {
+    q: 'Are my Instagram credentials required?',
+    a: 'Never. You never need to enter your username, password, cookies, API keys, or session tokens.',
+  },
+  {
+    q: 'Can I use InstaDown on mobile?',
+    a: 'Yes! InstaDown is fully responsive and works smoothly on iOS (Safari/Chrome), Android (Chrome/Firefox), tablets, and desktops.',
+  },
 ];
 
 export default function Home() {
   const [url, setUrl] = useState('');
-  const [activeTab, setActiveTab] = useState('auto');
+  const [activeTab, setActiveTab] = useState('reel');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [media, setMedia] = useState(null);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [dlAll, setDlAll] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [openFaq, setOpenFaq] = useState(null);
+
+  const inputRef = useRef(null);
+  const resultRef = useRef(null);
 
   const currentTab = TABS.find((t) => t.id === activeTab) || TABS[0];
 
   const handleTabChange = (tabId) => {
     setActiveTab(tabId);
     setError(null);
-    setMedia(null);
+  };
+
+  const handlePaste = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          setUrl(text.trim());
+          if (inputRef.current) inputRef.current.focus();
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const handleFetch = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     if (!url.trim()) return;
 
     setLoading(true);
@@ -48,8 +93,18 @@ export default function Home() {
       }
 
       setMedia(data);
+      setTimeout(() => {
+        if (resultRef.current) {
+          resultRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 150);
     } catch (err) {
       setError(err.message || 'An error occurred while fetching the media');
+      setTimeout(() => {
+        if (resultRef.current) {
+          resultRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 150);
     } finally {
       setLoading(false);
     }
@@ -83,232 +138,566 @@ export default function Home() {
     setDlAll(false);
   };
 
+  const handleCopyLink = () => {
+    if (url) {
+      navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const scrollToInput = (tabToSet) => {
+    if (tabToSet) setActiveTab(tabToSet);
+    if (inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   const isMultiItem = media && (media.type === 'carousel' || (media.images && media.images.length > 1));
   const isSingleStoryVideo = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'video';
   const isSingleStoryImage = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'image';
 
   const getItemButtonLabel = (item, idx) => {
-    if (media?.type === 'story') {
-      return `Story ${idx + 1}`;
-    }
-    if (item.type === 'video') {
-      return `Video ${idx + 1}`;
-    }
+    if (media?.type === 'story') return `Story ${idx + 1}`;
+    if (item.type === 'video') return `Video ${idx + 1}`;
     return `Image ${idx + 1}`;
   };
 
   return (
     <>
-      <div className="container">
-        {/* Header */}
-        <div className="header">
-          <div className="logo">
-            <span className="logo-icon">✨</span>
-            <h1 className="title">InstaDown</h1>
-          </div>
-          <p className="subtitle">Self-hosted Instagram Reels, Videos, Posts &amp; Stories Downloader</p>
-          <div className="badge-features">
-            <span>⚡ Direct HD</span>
-            <span>🚫 No API Keys</span>
-            <span>🔒 100% Free &amp; Private</span>
-          </div>
-        </div>
+      {/* ── Glass Navbar ── */}
+      <header className="navbar">
+        <div className="nav-container">
+          <a href="#" className="nav-brand">
+            <span className="nav-brand-icon">
+              <InstagramIcon />
+            </span>
+            <span>InstaDown</span>
+          </a>
 
-        {/* Tab Selection */}
-        <div className="tabs tabs-4" role="tablist">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              className={`tab-btn ${activeTab === tab.id ? 'tab-active' : ''}`}
-              onClick={() => handleTabChange(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+          <ul className="nav-links">
+            <li><a href="#hero" className="nav-link">Home</a></li>
+            <li><a href="#how-it-works" className="nav-link">How it works</a></li>
+            <li><a href="#supported-media" className="nav-link">Supported media</a></li>
+            <li><a href="#faq" className="nav-link">FAQ</a></li>
+          </ul>
 
-        {/* Input Form */}
-        <form onSubmit={handleFetch} className="form">
-          <div className="input-wrap">
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder={currentTab.placeholder}
-              required
-              className="input"
-            />
-          </div>
-
-          <button type="submit" disabled={loading} className="btn btn-primary" id="fetch-btn">
-            {loading ? (
-              <>
-                <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                Extracting Media...
-              </>
-            ) : (
-              <>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.35-4.35" />
-                </svg>
-                Fetch Media
-              </>
-            )}
+          <button onClick={() => scrollToInput()} className="nav-cta-btn">
+            Start Downloading
           </button>
-        </form>
+        </div>
+      </header>
 
-        {/* Error */}
-        {error && (
-          <div className="error-message" role="alert">
-            <span>⚠️</span>
-            <span>{error}</span>
+      {/* ── Main Layout Wrapper ── */}
+      <main className="main-wrap">
+
+        {/* ── 1. Hero Section ── */}
+        <section className="hero-section" id="hero">
+          <div className="hero-pill-badge">
+            <span>• Fast</span>
+            <span>• Public content</span>
+            <span>• No login</span>
           </div>
-        )}
 
-        {/* ── Results Display ────────────────────────────────────── */}
-        {media && (
-          <div className="media-preview">
-            
-            {/* ── 1. Reel / Video Post / Single Story Video ── */}
-            {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
-              <>
-                <div className="media-badge">
-                  {media.type === 'story' ? '📖 Instagram Story Ready' : '🎬 HD Video Ready'}
-                </div>
-                <div className="video-wrap">
-                  <video
-                    src={previewUrl(media.videoUrl || media.images?.[0]?.url)}
-                    controls
-                    className="media-element"
-                    poster={previewUrl(media.thumbnail || media.images?.[0]?.thumbnail)}
-                    playsInline
-                  />
-                </div>
-                {media.title && <p className="media-title">{media.title}</p>}
-                {media.username && <p className="media-author">@{media.username}</p>}
-                {media.author && <p className="media-author">@{media.author}</p>}
-                <a
-                  href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
-                  className="btn btn-success btn-download-main"
-                  id="download-btn"
-                  download={media.type === 'story' ? `instagram_story_${Date.now()}.mp4` : `instagram_video_${Date.now()}.mp4`}
-                >
-                  <DownloadIcon /> {media.type === 'story' ? 'Download Story (MP4)' : 'Download Video (MP4)'}
-                </a>
-              </>
-            )}
+          <h1 className="hero-title">
+            Download Instagram<br />media effortlessly.
+          </h1>
 
-            {/* ── 2. Single Photo Post / Single Story Image ── */}
-            {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
-              <>
-                <div className="media-badge">
-                  {media.type === 'story' ? '📖 Instagram Story Ready' : '🖼️ HD Image Ready'}
-                </div>
-                <div className="single-img-wrap">
-                  <img
-                    src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
-                    alt="Instagram media"
-                    className="media-element"
-                    referrerPolicy="no-referrer"
-                    crossOrigin="anonymous"
-                  />
-                </div>
-                {media.title && <p className="media-title">{media.title}</p>}
-                {media.username && <p className="media-author">@{media.username}</p>}
-                {media.author && <p className="media-author">@{media.author}</p>}
-                <a
-                  href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
-                  className="btn btn-success btn-download-main"
-                  id="download-btn"
-                  download={media.type === 'story' ? `instagram_story_${Date.now()}.jpg` : `instagram_image_${Date.now()}.jpg`}
-                >
-                  <DownloadIcon /> {media.type === 'story' ? 'Download Story (HD)' : 'Download Image (HD)'}
-                </a>
-              </>
-            )}
+          <p className="hero-subtitle">
+            Paste a public Instagram link and get your video, photo, Reel, or Story in seconds.
+          </p>
 
-            {/* ── 3. Multi-Photo Carousel / Multiple Stories ── */}
-            {isMultiItem && (
-              <>
-                <div className="carousel-header">
-                  <div className="media-badge">
-                    {media.type === 'story' ? `📖 ${media.count} Active Stories` : `🗂️ ${media.count} Images Found`}
+          {/* Filter Tabs Pill */}
+          <div className="tab-pills-wrap" role="tablist">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                className={`tab-pill ${activeTab === tab.id ? 'tab-pill-active' : ''}`}
+                onClick={() => handleTabChange(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Hero Input Glass Card */}
+          <div className="input-glass-card" id="download-input">
+            <div className="input-card-title">Paste your Instagram link</div>
+            <form onSubmit={handleFetch}>
+              <div className="input-row">
+                <span className="input-icon-left">
+                  <LinkIcon />
+                </span>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder={currentTab.placeholder}
+                  required
+                  className="url-input"
+                />
+                <button type="button" onClick={handlePaste} className="btn-paste-inside">
+                  Paste
+                </button>
+              </div>
+
+              <button type="submit" disabled={loading} className="btn-download-hero" id="fetch-btn">
+                {loading ? (
+                  <>
+                    <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    Extracting Media...
+                  </>
+                ) : (
+                  'Download'
+                )}
+              </button>
+            </form>
+            <div className="input-card-helper">
+              Supports public Reels, Posts, Videos &amp; Stories
+            </div>
+          </div>
+
+          {/* Checklist Bullets */}
+          <div className="hero-checklist">
+            <div className="hero-check-item">
+              <span className="hero-check-dot"></span>
+              <span>No Instagram login</span>
+            </div>
+            <div className="hero-check-item">
+              <span className="hero-check-dot"></span>
+              <span>Public content only</span>
+            </div>
+            <div className="hero-check-item">
+              <span className="hero-check-dot"></span>
+              <span>Fast processing</span>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 2. Result State Section ── */}
+        <section className="result-section" id="result-state" ref={resultRef}>
+          <span className="section-tag">RESULT STATE</span>
+          <h2 className="section-title">Your media is ready.</h2>
+          <p className="section-subtitle">Reusable result card for video, image, carousel and Story downloads.</p>
+
+          {/* Active Results Card */}
+          {media && (
+            <div className="result-card-wrap">
+              {/* Single Reel / Video / Single Story Video */}
+              {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
+                <div className="result-card-inner">
+                  <div className="result-media-frame">
+                    <video
+                      src={previewUrl(media.videoUrl || media.images?.[0]?.url)}
+                      controls
+                      className="result-media-video"
+                      poster={previewUrl(media.thumbnail || media.images?.[0]?.thumbnail)}
+                      playsInline
+                    />
                   </div>
+                  <div className="result-info">
+                    <div className="result-breadcrumb">
+                      Instagram &gt; {media.type === 'story' ? 'Story' : 'Reel'}
+                    </div>
+                    <h3 className="result-media-title">{media.title || 'Media ready'}</h3>
+                    <div className="result-meta-pill">
+                      <span>1080 × 1920</span>
+                      <span>•</span>
+                      <span>MP4</span>
+                      {media.username && (
+                        <>
+                          <span>•</span>
+                          <span>@{media.username}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="result-actions">
+                      <a
+                        href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
+                        className="btn-primary-gradient"
+                        download={media.type === 'story' ? `instagram_story_${Date.now()}.mp4` : `instagram_video_${Date.now()}.mp4`}
+                      >
+                        <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Video'}
+                      </a>
+                      <button type="button" onClick={handleCopyLink} className="btn-dark-action">
+                        {copied ? '✓ Copied' : 'Copy Link'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Single Photo / Story Image */}
+              {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
+                <div className="result-card-inner">
+                  <div className="result-media-frame">
+                    <img
+                      src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
+                      alt="Instagram media"
+                      className="result-media-img"
+                    />
+                  </div>
+                  <div className="result-info">
+                    <div className="result-breadcrumb">
+                      Instagram &gt; {media.type === 'story' ? 'Story' : 'Post'}
+                    </div>
+                    <h3 className="result-media-title">{media.title || 'Image ready'}</h3>
+                    <div className="result-meta-pill">
+                      <span>HD Resolution</span>
+                      <span>•</span>
+                      <span>JPG</span>
+                      {media.username && (
+                        <>
+                          <span>•</span>
+                          <span>@{media.username}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="result-actions">
+                      <a
+                        href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
+                        className="btn-primary-gradient"
+                        download={media.type === 'story' ? `instagram_story_${Date.now()}.jpg` : `instagram_image_${Date.now()}.jpg`}
+                      >
+                        <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Image'}
+                      </a>
+                      <button type="button" onClick={handleCopyLink} className="btn-dark-action">
+                        {copied ? '✓ Copied' : 'Copy Link'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Multi-Item Carousel / Multiple Stories */}
+              {isMultiItem && (
+                <div className="multi-grid-wrap">
+                  <div className="multi-grid-header">
+                    <div className="result-breadcrumb">
+                      Instagram &gt; {media.type === 'story' ? `${media.count} Active Stories` : `${media.count} Carousel Images`}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => downloadAll(media.images)}
+                      disabled={dlAll}
+                      className="btn-primary-gradient"
+                    >
+                      {dlAll ? 'Downloading All...' : `Download All (${media.count})`}
+                    </button>
+                  </div>
+
+                  <div className="multi-grid-cards">
+                    {media.images.map((item, idx) => (
+                      <div key={idx} className="multi-grid-card">
+                        <div className="multi-grid-thumb">
+                          {item.type === 'video' ? (
+                            <video
+                              src={previewUrl(item.url)}
+                              poster={item.thumbnail ? previewUrl(item.thumbnail) : undefined}
+                              controls
+                              playsInline
+                            />
+                          ) : (
+                            <img
+                              src={previewUrl(item.url)}
+                              alt={`Item ${idx + 1}`}
+                              onClick={() => setSelectedPhoto(previewUrl(item.url))}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          )}
+                          <span className="multi-grid-badge">{idx + 1}/{media.count}</span>
+                        </div>
+                        <a
+                          href={downloadUrl(item.url)}
+                          download={media.type === 'story' ? `instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}` : `instagram_image_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
+                          className="btn-dark-action"
+                          style={{ justifyContent: 'center', fontSize: '0.78rem', padding: '0.5rem' }}
+                        >
+                          <DownloadIcon /> {getItemButtonLabel(item, idx)}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fallback Static Placeholder when no media is fetched */}
+          {!media && !error && (
+            <div className="result-card-wrap" style={{ opacity: 0.65 }}>
+              <div className="result-card-inner">
+                <div className="result-media-frame" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>Media Preview Area</span>
+                </div>
+                <div className="result-info">
+                  <div className="result-breadcrumb">Instagram &gt; Reel</div>
+                  <h3 className="result-media-title">Media name</h3>
+                  <div className="result-meta-pill">
+                    <span>1080 × 1920</span>
+                    <span>•</span>
+                    <span>MP4</span>
+                    <span>•</span>
+                    <span>12.4 MB</span>
+                  </div>
+                  <div className="result-actions">
+                    <button className="btn-primary-gradient" style={{ pointerEvents: 'none', opacity: 0.8 }}>
+                      Download Video
+                    </button>
+                    <button className="btn-dark-action" style={{ pointerEvents: 'none', opacity: 0.8 }}>
+                      Copy Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error Message Display */}
+          {error && (
+            <div className="result-card-wrap" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+              <div style={{ color: '#fca5a5', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                <span style={{ fontSize: '1.25rem' }}>⚠️</span>
+                <span style={{ fontWeight: 600 }}>{error}</span>
+              </div>
+              <button onClick={() => scrollToInput()} className="btn-dark-action">
+                Try again
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* ── 3. How It Works (Three Steps) ── */}
+        <section className="how-it-works-section" id="how-it-works">
+          <span className="section-tag">HOW IT WORKS</span>
+          <h2 className="section-title">Three steps. That&apos;s it.</h2>
+          <p className="section-subtitle">A focused flow from public Instagram link to download.</p>
+
+          <div className="three-steps-grid">
+            <div className="step-card">
+              <div className="step-number">01</div>
+              <h3 className="step-title">Paste</h3>
+              <p className="step-desc">Paste your public Instagram link.</p>
+            </div>
+            <div className="step-card">
+              <div className="step-number">02</div>
+              <h3 className="step-title">Process</h3>
+              <p className="step-desc">We find the publicly available media.</p>
+            </div>
+            <div className="step-card">
+              <div className="step-number">03</div>
+              <h3 className="step-title">Download</h3>
+              <p className="step-desc">Download your media instantly.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 4. Simple By Design (Features) ── */}
+        <section className="features-section" id="features">
+          <span className="section-tag">KEY BENEFITS</span>
+          <h2 className="section-title">Simple by design.</h2>
+          <p className="section-subtitle">Everything important is visible, predictable, and easy to use.</p>
+
+          <div className="features-grid">
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">No Instagram login</h3>
+              <p className="feature-desc">Never asks for your Instagram credentials or personal account access.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">Public content only</h3>
+              <p className="feature-desc">Focuses purely on readily accessible public media without private bypasses.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">Fast processing</h3>
+              <p className="feature-desc">High-speed parallel stream extraction without unnecessary waiting.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">Mobile friendly</h3>
+              <p className="feature-desc">Optimized responsive experience on iOS, Android, tablets, and desktop.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">Privacy focused</h3>
+              <p className="feature-desc">No logs, tracking cookies, or user history recorded on our servers.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon-bullet">✦</div>
+              <h3 className="feature-title">Simple interface</h3>
+              <p className="feature-desc">One clean input box, one-click immediate download.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 5. Supported Media ── */}
+        <section className="supported-section" id="supported-media">
+          <span className="section-tag">SUPPORTED MEDIA</span>
+          <h2 className="section-title">Everything you need in one place.</h2>
+          <p className="section-subtitle">One interface for Reels, videos, posts and public Stories.</p>
+
+          <div className="supported-grid">
+            <div className="supported-card" onClick={() => scrollToInput('reel')} style={{ cursor: 'pointer' }}>
+              <div>
+                <div className="supported-icon">▶</div>
+                <h3 className="supported-title">REELS</h3>
+                <p className="supported-desc">Download public Instagram Reels.</p>
+              </div>
+              <div className="supported-arrow">↗</div>
+            </div>
+
+            <div className="supported-card" onClick={() => scrollToInput('video')} style={{ cursor: 'pointer' }}>
+              <div>
+                <div className="supported-icon">◉</div>
+                <h3 className="supported-title">VIDEO POSTS</h3>
+                <p className="supported-desc">Save public Instagram video posts.</p>
+              </div>
+              <div className="supported-arrow">↗</div>
+            </div>
+
+            <div className="supported-card" onClick={() => scrollToInput('post')} style={{ cursor: 'pointer' }}>
+              <div>
+                <div className="supported-icon">▣</div>
+                <h3 className="supported-title">PHOTO POSTS</h3>
+                <p className="supported-desc">Download images and carousel posts.</p>
+              </div>
+              <div className="supported-arrow">↗</div>
+            </div>
+
+            <div className="supported-card" onClick={() => scrollToInput('story')} style={{ cursor: 'pointer' }}>
+              <div>
+                <div className="supported-icon">▢</div>
+                <h3 className="supported-title">STORIES</h3>
+                <p className="supported-desc">Download currently available public Stories.</p>
+              </div>
+              <div className="supported-arrow">↗</div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 6. Interaction States ── */}
+        <section className="feedback-section" id="interaction-states">
+          <span className="section-tag">INTERACTION STATES</span>
+          <h2 className="section-title">Clear feedback at every step.</h2>
+          <p className="section-subtitle">Loading and error states stay understandable.</p>
+
+          <div className="feedback-grid">
+            <div className="feedback-card">
+              <div className="feedback-header">
+                <span className="feedback-dot yellow"></span>
+                <span>Fetching your media...</span>
+              </div>
+              <p className="feedback-desc">
+                ✓ Link validation &nbsp;•&nbsp; Finding media &nbsp;•&nbsp; Preparing download
+              </p>
+              <button onClick={() => scrollToInput()} className="feedback-btn">
+                Try again
+              </button>
+            </div>
+
+            <div className="feedback-card">
+              <div className="feedback-header">
+                <span className="feedback-dot red"></span>
+                <span>Invalid Instagram link</span>
+              </div>
+              <p className="feedback-desc">
+                Please paste a valid public Instagram link or username.
+              </p>
+              <button onClick={() => scrollToInput()} className="feedback-btn">
+                Try again
+              </button>
+            </div>
+
+            <div className="feedback-card">
+              <div className="feedback-header">
+                <span className="feedback-dot blue"></span>
+                <span>No active Story found</span>
+              </div>
+              <p className="feedback-desc">
+                This public account currently has no active 24-hour Stories.
+              </p>
+              <button onClick={() => scrollToInput()} className="feedback-btn">
+                Try again
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* ── 7. FAQ Accordion ── */}
+        <section className="faq-section" id="faq">
+          <span className="section-tag">FAQ</span>
+          <h2 className="section-title">Questions, answered.</h2>
+          <p className="section-subtitle">Keep the most important expectations clear.</p>
+
+          <div className="faq-list">
+            {FAQS.map((faq, idx) => {
+              const isOpen = openFaq === idx;
+              return (
+                <div key={idx} className="faq-item">
                   <button
                     type="button"
-                    onClick={() => downloadAll(media.images)}
-                    disabled={dlAll}
-                    className="btn btn-success btn-download-all"
-                    id="download-all-btn"
+                    className="faq-question"
+                    onClick={() => setOpenFaq(isOpen ? null : idx)}
                   >
-                    {dlAll ? (
-                      <>
-                        <svg className="spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                        </svg>
-                        Downloading All...
-                      </>
-                    ) : (
-                      <>
-                        <DownloadIcon /> Download All ({media.count})
-                      </>
-                    )}
+                    <span>{faq.q}</span>
+                    <span className="faq-icon" style={{ transform: isOpen ? 'rotate(45deg)' : 'none' }}>
+                      +
+                    </span>
                   </button>
-                </div>
-
-                <div className="carousel-grid">
-                  {media.images.map((item, idx) => (
-                    <div key={idx} className="carousel-item">
-                      <div className="carousel-img-wrap">
-                        {item.type === 'video' ? (
-                          <video
-                            src={previewUrl(item.url)}
-                            poster={item.thumbnail ? previewUrl(item.thumbnail) : undefined}
-                            controls
-                            playsInline
-                            className="carousel-img"
-                          />
-                        ) : (
-                          <img
-                            src={previewUrl(item.url)}
-                            alt={`Media ${idx + 1}`}
-                            className="carousel-img"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                            crossOrigin="anonymous"
-                            onClick={() => setSelectedPhoto(previewUrl(item.url))}
-                          />
-                        )}
-                        <div className="carousel-overlay">
-                          <span className="photo-num">{idx + 1} / {media.count}</span>
-                        </div>
-                      </div>
-                      <a
-                        href={downloadUrl(item.url)}
-                        download={media.type === 'story' ? `instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}` : `instagram_image_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
-                        className="btn btn-item-dl"
-                        id={`download-img-${idx}`}
-                      >
-                        <DownloadIcon /> {getItemButtonLabel(item, idx)}
-                      </a>
+                  {isOpen && (
+                    <div className="faq-answer">
+                      {faq.a}
                     </div>
-                  ))}
+                  )}
                 </div>
-
-                {media.title && <p className="media-title">{media.title}</p>}
-                {media.username && <p className="media-author">@{media.username}</p>}
-                {media.author && <p className="media-author">@{media.author}</p>}
-              </>
-            )}
-
+              );
+            })}
           </div>
-        )}
-      </div>
+        </section>
+
+      </main>
+
+      {/* ── Footer ── */}
+      <footer className="footer">
+        <div className="footer-container">
+          <div className="footer-left">
+            <div>Email: <a href="mailto:aniketpat@gmail.com">aniketpat@gmail.com</a></div>
+            <div>GitHub: <a href="https://github.com/Aniket4477/instamediadownloader" target="_blank" rel="noreferrer">https://github.com/Aniket4477/instamediadownloader</a></div>
+            <div style={{ marginTop: '0.4rem' }}>Thanks for checking out! Crafted for speed.</div>
+          </div>
+
+          <div className="footer-center">
+            <div className="footer-logo-box">
+              <InstagramIcon />
+            </div>
+            <div className="footer-brand-title">InstaDown</div>
+          </div>
+
+          <div className="footer-right">
+            <div>Simple downloads for public Instagram media.</div>
+            <div className="footer-nav">
+              <a href="#hero">Home</a>
+              <a href="#how-it-works">How it works</a>
+              <a href="#faq">FAQ</a>
+              <a href="#">Privacy</a>
+              <a href="#">Terms</a>
+              <a href="#">Contact</a>
+            </div>
+            <div className="footer-copy">
+              © 2026 InstaDown. All rights reserved.<br />
+              InstaDown is an independent tool and is not affiliated with Instagram.
+            </div>
+          </div>
+        </div>
+      </footer>
 
       {/* ── Photo Lightbox Modal ── */}
       {selectedPhoto && (
@@ -316,16 +705,17 @@ export default function Home() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <img src={selectedPhoto} alt="Full preview" className="modal-img" />
             <button className="modal-close" onClick={() => setSelectedPhoto(null)}>✕</button>
-            <a href={selectedPhoto.replace('dl=0', 'dl=1') + '&dl=1'} download className="btn btn-success modal-dl-btn">
+            <a
+              href={selectedPhoto.replace('dl=0', 'dl=1') + '&dl=1'}
+              download
+              className="btn-primary-gradient"
+              style={{ marginTop: '1rem', width: '100%', justifyContent: 'center' }}
+            >
               <DownloadIcon /> Download Media
             </a>
           </div>
         </div>
       )}
-
-      <p className="footer-text">
-        Self-hosted open-source downloader · Supports Reels, Videos, Photos, Carousels &amp; Stories · For personal use only
-      </p>
     </>
   );
 }
@@ -336,6 +726,25 @@ function DownloadIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function LinkIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
+function InstagramIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
     </svg>
   );
 }
