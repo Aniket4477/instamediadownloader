@@ -2,32 +2,36 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const instagramRoutes = require('./routes/instagram');
+const { handleProvidersStatus } = require('./controllers/storyController');
 const { errorHandler } = require('./middleware/errorHandler');
 const { rateLimiter } = require('./middleware/rateLimiter');
+const config = require('./config/providers');
+const logger = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// ── Security & Utility Middleware ──────────────────────────────────────────
+// ── 1. Security & Core Middleware ──────────────────────────────────────────
 app.use(cors({ origin: '*' }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: config.security.maxPayloadSizeBytes }));
+app.use(express.urlencoded({ extended: true, limit: config.security.maxPayloadSizeBytes }));
 app.use(rateLimiter);
 
-// ── Health Check Endpoint ──────────────────────────────────────────────────
+// ── 2. Health & Provider Status Endpoints ──────────────────────────────────
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    service: 'instagram-story-api',
-    provider: process.env.STORY_PROVIDER || 'fabula',
+    service: 'instagram-story-downloader',
     timestamp: new Date().toISOString(),
   });
 });
 
-// ── API Routes ─────────────────────────────────────────────────────────────
+app.get('/api/providers/status', handleProvidersStatus);
+
+// ── 3. API Routes ──────────────────────────────────────────────────────────
 app.use('/api/instagram', instagramRoutes);
 
-// ── 404 Handler for Unknown Routes ─────────────────────────────────────────
+// ── 4. 404 Handler for Unknown Routes ──────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -36,14 +40,13 @@ app.use((req, res) => {
   });
 });
 
-// ── Global Centralized Error Handler ───────────────────────────────────────
+// ── 5. Global Centralized Error Handler ────────────────────────────────────
 app.use(errorHandler);
 
-// Start server if run directly
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`[Instagram Story API] Server running on http://localhost:${PORT}`);
-    console.log(`[Instagram Story API] Active Provider: ${process.env.STORY_PROVIDER || 'fabula'}`);
+    logger.info(`Server running on http://localhost:${PORT}`);
+    logger.info('Registered providers: SaveClip, InstaSaver');
   });
 }
 

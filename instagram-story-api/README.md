@@ -1,121 +1,157 @@
-# Instagram Public Story Downloader API
+# Public Instagram Story Downloader API (SaveClip & InstaSaver Providers)
 
-A self-hosted, modular Node.js / Express API designed to fetch **public** Instagram Stories without requiring Instagram logins, passwords, cookies, or paid API subscriptions.
+A production-ready, self-hosted Node.js / Express backend service that retrieves **PUBLIC Instagram Stories only** using a resilient dual-provider fallback architecture (`SaveClip` → `InstaSaver`).
 
 ---
 
 ## 🎯 Architecture
 
-```
-Frontend / Client
-      │
-      │ GET /api/instagram/story/:username
-      ▼
-Node.js Express API (Port 4000)
-      │
-      ├── Input Validation (validates 1-30 char username format)
-      ├── Rate Limiting (prevents abuse)
-      │
-      ▼
-Story Provider Layer (Modular Abstraction)
-      ├── FabulaProvider (Connects to StoriesIG upstream)
-      └── MockProvider (Deterministic testing & offline development)
-      │
-      ▼
-Normalized Public Stories JSON Response
+```text
+Visitor / Frontend
+        │
+        │ POST /api/instagram/story { url }
+        ▼
+Node.js Express Server
+        │
+        ├── SSRF Validation & Input Sanitizer (utils/instagramUrl.js)
+        ├── Rate Limiter Middleware (middleware/rateLimiter.js)
+        ├── Short-Lived In-Memory Cache (services/storyService.js)
+        │
+        ▼
+StoryService (Provider Orchestrator)
+        │
+        ├── 1. Try SaveClipProvider (services/providers/saveclipProvider.js)
+        │       ├── Succeeded? → Return normalized media & cache
+        │       └── Failed / Blocked / Unavailable? → Fall through
+        │
+        ├── 2. Try InstaSaverProvider (services/providers/instasaverProvider.js)
+        │       ├── Succeeded? → Return normalized media & cache
+        │       └── Failed / Blocked / Unavailable? → Fall through
+        │
+        └── 3. All Providers Failed? → Controlled 503 PROVIDERS_UNAVAILABLE
 ```
 
 ---
 
 ## 📡 API Endpoints
 
-### 1. Fetch Public Stories
-**`GET /api/instagram/story/:username`**
+### 1. Retrieve Public Story
+**`POST /api/instagram/story`**
 
-#### Success Response (Active Stories):
+**Request Headers:** `Content-Type: application/json`
+
+**Request Body Examples:**
+```json
+{ "url": "https://www.instagram.com/stories/nike/3968731649252302820/" }
+```
+or
+```json
+{ "url": "https://www.instagram.com/nike/" }
+```
+or
+```json
+{ "url": "@nike" }
+```
+
+#### Successful Response:
 ```json
 {
   "success": true,
-  "username": "instagram",
-  "isPublic": true,
+  "provider": "saveclip",
+  "username": "nike",
   "stories": [
     {
       "type": "video",
-      "url": "https://instagram.fdbd1-3.fna.fbcdn.net/.../story.mp4",
-      "thumbnail": "https://instagram.fdbd1-3.fna.fbcdn.net/.../thumb.jpg",
-      "timestamp": 1785900000
+      "url": "https://cdn.saveclip.app/sample.mp4",
+      "thumbnail": "https://cdn.saveclip.app/sample.jpg",
+      "mimeType": "video/mp4"
     },
     {
       "type": "image",
-      "url": "https://instagram.fdbd1-3.fna.fbcdn.net/.../story.jpg",
-      "timestamp": 1785900500
+      "url": "https://cdn.saveclip.app/sample2.jpg",
+      "mimeType": "image/jpeg"
     }
   ]
 }
 ```
 
-#### Success Response (No Active Stories):
+#### No Active Public Stories:
 ```json
 {
   "success": true,
+  "provider": "saveclip",
   "username": "example",
-  "isPublic": true,
   "stories": []
 }
 ```
 
-#### Error Response: Private Account (403):
+#### Private Account (403):
 ```json
 {
   "success": false,
   "error": "PRIVATE_ACCOUNT",
-  "message": "This Instagram account is private."
+  "message": "Only public Instagram accounts are supported."
 }
 ```
 
-#### Error Response: Nonexistent Account (404):
+#### Providers Unavailable (503):
 ```json
 {
   "success": false,
-  "error": "ACCOUNT_NOT_FOUND",
-  "message": "Instagram account was not found."
-}
-```
-
-#### Error Response: Upstream / Cloudflare Failure (502 / 504):
-```json
-{
-  "success": false,
-  "error": "FETCH_FAILED",
-  "message": "Unable to fetch public stories at this time."
+  "error": "PROVIDERS_UNAVAILABLE",
+  "message": "Unable to retrieve this public Story right now."
 }
 ```
 
 ---
 
-## 🔍 Upstream Dependency Analysis: Fabula & StoriesIG
+### 2. Provider Health Check
+**`GET /api/providers/status`**
 
-### What We Found During Verification:
-1. **Fabula Project Inspection**: The Go repository [`mrizkimaulidan/fabula`](https://github.com/mrizkimaulidan/fabula) relies on `https://api-ig.storiesig.info/api/userInfoByUsername/%s` and `https://api-ig.storiesig.info/api/story?url=...`.
-2. **Live Test Results**: Calling `https://api-ig.storiesig.info/` currently returns **HTTP 403 Forbidden with Cloudflare Turnstile / Bot Verification Challenge (`<title>Just a moment...</title>`)**.
-3. **Implications**: The StoriesIG upstream has deployed active bot defense to prevent programmatic scraping.
-4. **Design Decision**: Rather than breaking the system when upstream bot defenses trigger, this project provides:
-   - Automated detection of Cloudflare challenges in `FabulaProvider`.
-   - Clean, standardized `FETCH_FAILED` responses without crashing or leaking stack traces.
-   - A modular `StoryProvider` base interface so alternative upstream services (e.g. self-hosted headless scrapers) can be swapped in seamlessly.
+**Response:**
+```json
+{
+  "saveclip": {
+    "available": false,
+    "reason": "Cloudflare Bot Protection Challenge"
+  },
+  "instasaver": {
+    "available": false,
+    "reason": "Security Header / Cloudflare Validation Required"
+  }
+}
+```
 
 ---
 
-## 🚀 Getting Started
+## 🔬 Investigation Results for SaveClip & InstaSaver
+
+### 1. SaveClip.app
+- **Live Test Behavior**: Direct server POST requests to `https://saveclip.app/api/ajaxSearch` encounter **Cloudflare Turnstile WAF bot challenges** (`HTTP 403 Forbidden` with `<title>Just a moment...</title>`).
+- **Provider Status**: In accordance with the project guidelines ("Do NOT bypass Cloudflare / anti-bot controls"), `SaveClipProvider` automatically detects WAF blocks and marks itself as `unavailable`, passing execution to `InstaSaverProvider`.
+
+### 2. InstaSaver.io
+- **Live Test Behavior**: Endpoints like `https://instasaver.io/api/download` require dynamic client-side security signatures and return `HTTP 401 Unauthorized: Missing security headers` or `HTTP 403 Forbidden`.
+- **Provider Status**: In accordance with the project guidelines ("Do NOT steal browser cookies or reuse sessions"), `InstaSaverProvider` detects missing security authorization and safely marks itself as `unavailable`.
+
+---
+
+## 🛡️ Security & Privacy Controls
+- **SSRF Prevention**: `utils/instagramUrl.js` strictly allowlists official `instagram.com` domains and blocks private subnet / loopback ranges (`127.0.0.1`, `169.254.169.254`, `10.0.0.0/8`, `192.168.0.0/16`, `localhost`, etc.).
+- **Rate Limiting**: `middleware/rateLimiter.js` applies IP-based rate limiting via `express-rate-limit`.
+- **Sanitized Logging**: `utils/logger.js` automatically strips passwords, cookies, session tokens, and keys from all log entries.
+- **Short-Lived Caching**: In-memory LRU cache stores successful public story responses for 5 minutes (configurable).
+
+---
+
+## 🚀 Installation & Running
 
 ### 1. Install Dependencies
 ```bash
-cd instagram-story-api
 npm install
 ```
 
 ### 2. Configure Environment
-Copy the example environment file:
 ```bash
 cp .env.example .env
 ```
@@ -124,32 +160,27 @@ cp .env.example .env
 ```bash
 npm run dev
 ```
-Server runs on `http://localhost:4000`.
+Starts API server on `http://localhost:4000`.
 
-### 4. Run Test Suite (11 Test Cases)
+### 4. Run Automated Test Suite (14 Tests)
 ```bash
 npm test
 ```
 
 ---
 
-## 🧪 Automated Test Coverage
-The test suite in `tests/run-tests.js` tests all 11 scenarios:
-1. ✅ Public account with active Story
-2. ✅ Public account with no Story
-3. ✅ Private account rejection
-4. ✅ Invalid username format validation
-5. ✅ Nonexistent account error (404)
-6. ✅ Upstream timeout handling (504)
-7. ✅ Upstream failure handling (502)
-8. ✅ Malformed upstream response handling
-9. ✅ Multiple Story items parsing
-10. ✅ Video Story structure and metadata
-11. ✅ Image Story structure and metadata
-
----
-
-## 🛡️ Strict Privacy & Security
-- **No Credentials**: No user passwords, session tokens, or cookies are stored or requested.
-- **Public Content Only**: Strictly rejects private account queries.
-- **No Paid APIs**: Zero RapidAPI or paid subscriptions required.
+## 🧪 Automated Tests Summary (14/14 Passed)
+- ✅ Public account with active Story
+- ✅ Public account with multiple Stories
+- ✅ Public video Story metadata & mimeType
+- ✅ Public image Story metadata & mimeType
+- ✅ Public account with no active Story
+- ✅ Private account rejection (403)
+- ✅ Invalid Instagram URL rejection (400)
+- ✅ Nonexistent account handling
+- ✅ SaveClip failure → InstaSaver fallback
+- ✅ Both providers failing (503 PROVIDERS_UNAVAILABLE)
+- ✅ Provider timeout graceful fallback
+- ✅ Malformed provider response handling
+- ✅ Rate limiter & security headers active
+- ✅ SSRF attack prevention & domain allowlisting
