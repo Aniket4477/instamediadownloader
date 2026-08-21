@@ -1,54 +1,55 @@
 'use client';
+
 import { useState } from 'react';
 
 const TABS = [
-  { id: 'auto',  label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram Reel, Video, Post, or Story link...' },
-  { id: 'reel',  label: '🎬 Reel / Video', placeholder: 'https://www.instagram.com/reel/... or /tv/...' },
-  { id: 'post',  label: '🖼️ Post / Carousel', placeholder: 'https://www.instagram.com/p/...' },
-  { id: 'story', label: '📖 Story', placeholder: 'https://www.instagram.com/stories/... or @username' },
+  { id: 'auto', label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram link or @username...' },
+  { id: 'reel', label: '🎬 Reel / Video', placeholder: 'Paste Instagram Reel or Video URL (e.g. https://www.instagram.com/reel/...)' },
+  { id: 'post', label: '🖼️ Post / Carousel', placeholder: 'Paste Instagram Post or Carousel URL (e.g. https://www.instagram.com/p/...)' },
+  { id: 'story', label: '📖 Story', placeholder: 'Paste public @username or Story URL...' },
 ];
 
 export default function Home() {
+  const [url, setUrl] = useState('');
   const [activeTab, setActiveTab] = useState('auto');
-  const [url, setUrl]             = useState('');
-  const [loading, setLoading]     = useState(false);
-  const [media, setMedia]         = useState(null);
-  const [error, setError]         = useState('');
-  const [dlAll, setDlAll]         = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [media, setMedia] = useState(null);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [dlAll, setDlAll] = useState(false);
 
-  const currentTab = TABS.find((t) => t.id === activeTab);
+  const currentTab = TABS.find((t) => t.id === activeTab) || TABS[0];
 
-  const handleTabChange = (id) => {
-    setActiveTab(id);
-    setUrl('');
+  const handleTabChange = (tabId) => {
+    setActiveTab(tabId);
+    setError(null);
     setMedia(null);
-    setError('');
-    setSelectedPhoto(null);
   };
 
   const handleFetch = async (e) => {
     e.preventDefault();
+    if (!url.trim()) return;
+
     setLoading(true);
-    setError('');
+    setError(null);
     setMedia(null);
-    setSelectedPhoto(null);
 
     try {
       const res = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), tab: activeTab }),
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to fetch Instagram media');
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Failed to fetch media');
       }
 
       setMedia(data);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'An error occurred while fetching the media');
     } finally {
       setLoading(false);
     }
@@ -64,16 +65,17 @@ export default function Home() {
     return `/api/proxy?url=${encodeURIComponent(src)}&dl=1`;
   };
 
-  const downloadAll = async (images) => {
+  const downloadAll = async (items) => {
+    if (!items || items.length === 0) return;
     setDlAll(true);
-    for (let i = 0; i < images.length; i++) {
-      const a = document.createElement('a');
-      a.href = downloadUrl(images[i].url);
-      const ext = images[i].type === 'video' ? 'mp4' : 'jpg';
-      a.download = `instagram_story_${i + 1}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const link = document.createElement('a');
+      link.href = downloadUrl(item.url || item);
+      link.download = `instagram_story_${i + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       await new Promise((r) => setTimeout(r, 600));
     }
     setDlAll(false);
@@ -161,7 +163,7 @@ export default function Home() {
           <div className="media-preview">
             
             {/* ── 1. Reel / Video Post / Single Story Video ── */}
-            {(media.type === 'video' || isSingleStoryVideo) && (
+            {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
               <>
                 <div className="media-badge">
                   {media.type === 'story' ? '📖 Instagram Story Video Ready' : '🎬 HD Video Ready'}
@@ -219,11 +221,11 @@ export default function Home() {
             )}
 
             {/* ── 3. Multi-Photo Carousel / Multiple Stories ── */}
-            {isMultiItem && !isSingleStoryVideo && (
+            {isMultiItem && (
               <>
                 <div className="carousel-header">
                   <div className="media-badge">
-                    {media.type === 'story' ? `📖 ${media.count} Story Items` : `🗂️ ${media.count} Photos Found`}
+                    {media.type === 'story' ? `📖 ${media.count} Active Stories` : `🗂️ ${media.count} Photos Found`}
                   </div>
                   <button
                     type="button"
@@ -250,13 +252,15 @@ export default function Home() {
                 <div className="carousel-grid">
                   {media.images.map((item, idx) => (
                     <div key={idx} className="carousel-item">
-                      <div
-                        className="carousel-img-wrap"
-                        onClick={() => setSelectedPhoto(previewUrl(item.url))}
-                        title="Click to view full preview"
-                      >
+                      <div className="carousel-img-wrap">
                         {item.type === 'video' ? (
-                          <video src={previewUrl(item.url)} className="carousel-img" />
+                          <video
+                            src={previewUrl(item.url)}
+                            poster={item.thumbnail ? previewUrl(item.thumbnail) : undefined}
+                            controls
+                            playsInline
+                            className="carousel-img"
+                          />
                         ) : (
                           <img
                             src={previewUrl(item.url)}
@@ -265,6 +269,7 @@ export default function Home() {
                             loading="lazy"
                             referrerPolicy="no-referrer"
                             crossOrigin="anonymous"
+                            onClick={() => setSelectedPhoto(previewUrl(item.url))}
                           />
                         )}
                         <div className="carousel-overlay">
@@ -273,11 +278,11 @@ export default function Home() {
                       </div>
                       <a
                         href={downloadUrl(item.url)}
-                        download={`instagram_media_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
+                        download={`instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
                         className="btn btn-item-dl"
                         id={`download-img-${idx}`}
                       >
-                        <DownloadIcon /> {item.type === 'video' ? 'Video' : 'Photo'} {idx + 1}
+                        <DownloadIcon /> {item.type === 'video' ? 'Video Story' : 'Photo Story'} {idx + 1}
                       </a>
                     </div>
                   ))}

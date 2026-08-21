@@ -7,7 +7,7 @@ const CHROME_PATH =
 function unwrapDirectCdnUrl(url) {
   if (!url || typeof url !== 'string') return url;
   try {
-    if (url.includes('storiesig.info/get') || url.includes('anonyig.com/get')) {
+    if (url.includes('storiesig.info/get') || url.includes('anonyig.com/get') || url.includes('instasaver.io/api/media/proxy')) {
       const parsed = new URL(url);
       const inner = parsed.searchParams.get('uri');
       if (inner && inner.startsWith('http')) return inner;
@@ -18,13 +18,129 @@ function unwrapDirectCdnUrl(url) {
       if (inner && inner.startsWith('http')) return inner;
     }
   } catch {
-    // fallback to original
+    // fallback
   }
   return url;
 }
 
+function isInstagramCdn(url) {
+  if (!url) return false;
+  return url.includes('cdninstagram.com') || url.includes('fbcdn.net');
+}
+
 /**
- * Strategy 1: InDown Exact Story URL Extractor (for https://www.instagram.com/stories/username/id)
+ * Strategy 1: InstaSaver Real-Time Story Extractor (Extracts ALL Active Public Stories)
+ */
+async function extractViaInstaSaver(page, username) {
+  try {
+    console.log(`[Story] InstaSaver extracting all active stories for @${username}`);
+
+    const interceptedVideoUrls = [];
+    const responseHandler = async (res) => {
+      const u = res.url();
+      if (
+        u.includes('.mp4') ||
+        (u.includes('proxy?') && u.includes('.mp4')) ||
+        (u.includes('download=1') && u.includes('.mp4'))
+      ) {
+        interceptedVideoUrls.push(unwrapDirectCdnUrl(u));
+      }
+    };
+
+    page.on('response', responseHandler);
+
+    await page.goto('https://instasaver.io/en/story-viewer/', { waitUntil: 'networkidle2', timeout: 25000 });
+
+    const inputSelector = 'input[type="text"], input[name="url"], input[placeholder*="username"], input[placeholder*="Instagram"]';
+    await page.waitForSelector(inputSelector, { timeout: 10000 });
+    await page.type(inputSelector, username, { delay: 20 });
+
+    await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('button, a.btn')];
+      const submitBtn = btns.find(
+        (b) =>
+          b.innerText &&
+          (b.innerText.toLowerCase().includes('view') ||
+            b.innerText.toLowerCase().includes('download') ||
+            b.innerText.toLowerCase().includes('search'))
+      );
+      if (submitBtn) submitBtn.click();
+    });
+
+    // Wait for the stories cards to appear
+    await new Promise((r) => setTimeout(r, 6500));
+
+    // Get number of active story download buttons
+    const btnCount = await page.evaluate(() => {
+      return document.querySelectorAll('.grid button').length;
+    });
+
+    console.log(`[Story] InstaSaver found ${btnCount} active story items for @${username}`);
+
+    // Click each download button sequentially to trigger the full HD video streams
+    for (let i = 0; i < btnCount; i++) {
+      await page.evaluate((idx) => {
+        const btns = document.querySelectorAll('.grid button');
+        if (btns[idx]) btns[idx].click();
+      }, i);
+      await new Promise((r) => setTimeout(r, 1800));
+    }
+
+    page.off('response', responseHandler);
+
+    // Extract thumbnails and images from rendered cards
+    const cardThumbnails = await page.evaluate(() => {
+      const thumbs = [];
+      const cards = document.querySelectorAll('.grid > div');
+      cards.forEach((card) => {
+        const img = card.querySelector('img');
+        if (img?.src) thumbs.push(img.src);
+      });
+      return thumbs;
+    });
+
+    const stories = [];
+    const seen = new Set();
+
+    // 1. Add all intercepted video streams
+    for (let i = 0; i < interceptedVideoUrls.length; i++) {
+      const vidUrl = interceptedVideoUrls[i];
+      if (isInstagramCdn(vidUrl) && !seen.has(vidUrl)) {
+        seen.add(vidUrl);
+        const thumb = cardThumbnails[i] ? unwrapDirectCdnUrl(cardThumbnails[i]) : undefined;
+        stories.push({
+          type: 'video',
+          url: vidUrl,
+          thumbnail: thumb,
+        });
+      }
+    }
+
+    // 2. If no video streams were triggered (e.g. photo stories), extract image cards
+    if (stories.length === 0) {
+      for (const thumb of cardThumbnails) {
+        const unwrapped = unwrapDirectCdnUrl(thumb);
+        if (isInstagramCdn(unwrapped) && !seen.has(unwrapped)) {
+          seen.add(unwrapped);
+          stories.push({
+            type: 'image',
+            url: unwrapped,
+            thumbnail: unwrapped,
+          });
+        }
+      }
+    }
+
+    console.log(`[Story] InstaSaver successfully extracted ${stories.length} stories for @${username}`);
+    return stories;
+  } catch (err) {
+    console.warn('[Story InstaSaver Strategy Error]:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Strategy 2: InDown Exact Story URL Extractor (for https://www.instagram.com/stories/username/id)
  */
 async function extractViaInDown(page, exactStoryUrl) {
   try {
@@ -36,14 +152,13 @@ async function extractViaInDown(page, exactStoryUrl) {
 
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 18000 }).catch(() => {}),
-      page.click('button.btn.btn-primary.link-area')
+      page.click('button.btn.btn-primary.link-area'),
     ]);
 
     const result = await page.evaluate(() => {
       const stories = [];
       const seen = new Set();
 
-      // Look for video elements on the result page
       const videos = document.querySelectorAll('video, video source');
       videos.forEach((v) => {
         const src = v.src;
@@ -53,7 +168,6 @@ async function extractViaInDown(page, exactStoryUrl) {
         }
       });
 
-      // Look for direct download links
       const links = document.querySelectorAll('a[href*="cdninstagram"], a[href*="fbcdn"]');
       links.forEach((a) => {
         const href = a.href;
@@ -62,7 +176,11 @@ async function extractViaInDown(page, exactStoryUrl) {
           if (!seen.has(cleanUrl) && !seen.has(href)) {
             seen.add(cleanUrl);
             seen.add(href);
-            const isVid = href.includes('.mp4') || href.includes('vencode_tag') || a.innerText.toLowerCase().includes('video') || a.innerText.toLowerCase().includes('server');
+            const isVid =
+              href.includes('.mp4') ||
+              href.includes('vencode_tag') ||
+              a.innerText.toLowerCase().includes('video') ||
+              a.innerText.toLowerCase().includes('server');
             stories.push({
               type: isVid ? 'video' : 'image',
               url: href,
@@ -71,7 +189,6 @@ async function extractViaInDown(page, exactStoryUrl) {
         }
       });
 
-      // Look for photo results
       const images = document.querySelectorAll('.result img, .image-area img, .card img');
       images.forEach((img) => {
         const src = img.src;
@@ -84,10 +201,12 @@ async function extractViaInDown(page, exactStoryUrl) {
       return stories;
     });
 
-    const unwrapped = result.map((s) => ({
-      ...s,
-      url: unwrapDirectCdnUrl(s.url),
-    }));
+    const unwrapped = result
+      .map((s) => ({
+        ...s,
+        url: unwrapDirectCdnUrl(s.url),
+      }))
+      .filter((s) => isInstagramCdn(s.url));
 
     if (unwrapped.length > 1 && unwrapped.every((s) => s.type === 'video')) {
       return [unwrapped[0]];
@@ -96,115 +215,6 @@ async function extractViaInDown(page, exactStoryUrl) {
     return unwrapped;
   } catch (err) {
     console.warn('[Story InDown Strategy Error]:', err.message);
-    return [];
-  }
-}
-
-/**
- * Strategy 2: StoriesIG Username Multi-Stories Extractor
- */
-async function extractViaStoriesIG(page, username) {
-  try {
-    console.log(`[Story] StoriesIG extracting all stories for @${username}`);
-    await page.goto('https://storiesig.info/en/', { waitUntil: 'networkidle2', timeout: 20000 });
-
-    const inputSelector = 'input.search-form__input';
-    await page.waitForSelector(inputSelector, { timeout: 8000 });
-    await page.click(inputSelector);
-    await page.type(inputSelector, username, { delay: 25 });
-
-    const btnSelector = 'button.search-form__button';
-    await page.click(btnSelector);
-
-    // Wait for profile & tabs to render
-    await new Promise((r) => setTimeout(r, 7000));
-
-    // Explicitly click the "STORIES" tab button
-    await page.evaluate(() => {
-      const tabs = [...document.querySelectorAll('button.tabs-component__button, .tabs-component__button, button')];
-      const storyBtn = tabs.find((b) => b.innerText && b.innerText.trim().toUpperCase() === 'STORIES');
-      if (storyBtn) storyBtn.click();
-    });
-
-    await new Promise((r) => setTimeout(r, 3500));
-
-    // Click story card buttons to trigger video stream / download link generation
-    await page.evaluate(() => {
-      const storyBtns = document.querySelectorAll('.media-content--story button, .media-content--story, [data-type="story"]');
-      storyBtns.forEach((b) => b.click());
-    });
-
-    await new Promise((r) => setTimeout(r, 3000));
-
-    const extracted = await page.evaluate(() => {
-      const stories = [];
-      const seen = new Set();
-
-      // Check all download links in the active stories panel
-      const downloadLinks = document.querySelectorAll(
-        '.tabs-component__panel:not([style*="display: none"]) a[href*="storiesig.info/get"], a[href*=".mp4"], .media-content--story a'
-      );
-
-      downloadLinks.forEach((a) => {
-        const href = a.href || a.getAttribute('href');
-        if (href && href.startsWith('http') && !seen.has(href)) {
-          seen.add(href);
-          const isVid = href.includes('.mp4') || href.includes('filename=AQ') || (a.innerText && a.innerText.toLowerCase().includes('video'));
-          stories.push({
-            type: isVid ? 'video' : 'image',
-            url: href,
-          });
-        }
-      });
-
-      // If links were not present, fallback to story cards & images
-      if (stories.length === 0) {
-        const storyCards = document.querySelectorAll(
-          '.media-content--story, [data-type="story"], .stories-item, .tabs-component__panel:not([style*="display: none"]) .media-content'
-        );
-
-        storyCards.forEach((card) => {
-          if (card.classList.contains('media-content--post') || card.closest('.media-content--post')) {
-            return;
-          }
-
-          const dlLink = card.querySelector('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"], a.btn-download');
-          const video = card.querySelector('video, video source');
-          const img = card.querySelector('img');
-
-          const videoUrl = video?.src || (dlLink && dlLink.href.includes('.mp4') ? dlLink.href : null);
-          const imageUrl = dlLink?.href || img?.src;
-
-          if (videoUrl && !seen.has(videoUrl)) {
-            seen.add(videoUrl);
-            stories.push({
-              type: 'video',
-              url: videoUrl,
-              thumbnail: img?.src || undefined,
-            });
-          } else if (imageUrl && !seen.has(imageUrl)) {
-            seen.add(imageUrl);
-            stories.push({
-              type: 'image',
-              url: imageUrl,
-              thumbnail: imageUrl,
-            });
-          }
-        });
-      }
-
-      return stories;
-    });
-
-    const unwrapped = extracted.map((s) => ({
-      ...s,
-      url: unwrapDirectCdnUrl(s.url),
-      thumbnail: unwrapDirectCdnUrl(s.thumbnail),
-    }));
-
-    return unwrapped;
-  } catch (err) {
-    console.warn('[Story StoriesIG Strategy Error]:', err.message);
     return [];
   }
 }
@@ -260,14 +270,14 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
       }
     }
 
-    // ── 2. For username queries or profile stories, extract ALL active stories 
-    const storiesList = await extractViaStoriesIG(page, username);
-    if (storiesList.length > 0) {
+    // ── 2. Primary Multi-Story Extractor via InstaSaver ──────────────────────
+    const instaSaverStories = await extractViaInstaSaver(page, username);
+    if (instaSaverStories.length > 0) {
       return {
         success: true,
         username,
-        count: storiesList.length,
-        stories: storiesList,
+        count: instaSaverStories.length,
+        stories: instaSaverStories,
       };
     }
 
