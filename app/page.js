@@ -294,7 +294,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── 2. Dynamic Result Section (Only appears when media or error is ready) ── */}
+        {/* ── 2. Result State Section (Only appears when media or error is present) ── */}
         {(media || error) && (
           <section className="result-section" id="result-state" ref={resultRef}>
             <span className="section-tag">RESULT STATE</span>

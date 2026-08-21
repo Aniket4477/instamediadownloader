@@ -453,21 +453,23 @@ body {
   height: 6px;
   border-radius: 50%;
   background: #10b981;
-/* ── Result State Section (Appears dynamically with entrance animation) ── */
+}
+
+/* ── Result State Section ────────────────────────────────── */
 .result-section {
   text-align: center;
   width: 100%;
-  animation: resultSlideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes resultSlideIn {
+@keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(22px) scale(0.98);
+    transform: translateY(24px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
