@@ -61,7 +61,7 @@ function parseShortcodesFromStderr(stderr) {
 }
 
 /**
- * Public Instagram oEmbed fetch (No login, no cookies, no API key)
+ * Public Instagram oEmbed fetch (Preserves original signed CDN URLs)
  */
 async function oembedFetch(shortcodeOrUrl) {
   const postUrl = shortcodeOrUrl.startsWith('http')
@@ -77,17 +77,6 @@ async function oembedFetch(shortcodeOrUrl) {
   });
   if (!res.ok) throw new Error(`oEmbed HTTP ${res.status}`);
   return res.json();
-}
-
-/**
- * Upgrades CDN thumbnail URL to full HD (1080p)
- */
-function upgradeImageQuality(url) {
-  if (!url) return url;
-  return url
-    .replace(/s\d+x\d+/g, 's1080x1080')
-    .replace(/_sh[\d.]+/g, '')
-    .replace(/_tt\d+/g, '');
 }
 
 function validateInstagramUrl(url) {
@@ -140,12 +129,12 @@ export async function POST(request) {
     const allStderr = stderr + '\n' + stderr2;
     const shortcodes = parseShortcodesFromStderr(allStderr);
 
-    // Case A: Single Image Post (no multiple shortcodes in carousel)
+    // Case A: Single Image Post
     if (shortcodes.length === 0) {
       try {
         const oembed = await oembedFetch(url);
         if (oembed.thumbnail_url) {
-          const imageUrl = upgradeImageQuality(oembed.thumbnail_url);
+          const imageUrl = oembed.thumbnail_url; // keep valid cryptographic signature
           return NextResponse.json({
             success: true,
             type: 'image',
@@ -176,8 +165,8 @@ export async function POST(request) {
     const images = results
       .filter((r) => r.status === 'fulfilled' && r.value?.thumbnail_url)
       .map((r) => {
-        const hqUrl = upgradeImageQuality(r.value.thumbnail_url);
-        return { url: hqUrl, thumbnail: hqUrl, title: r.value.title || '' };
+        const validUrl = r.value.thumbnail_url;
+        return { url: validUrl, thumbnail: validUrl, title: r.value.title || '' };
       });
 
     if (images.length === 0) {

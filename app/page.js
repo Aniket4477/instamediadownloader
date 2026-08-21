@@ -52,19 +52,16 @@ export default function Home() {
 
   const proxyUrl = (src) => `/api/proxy?url=${encodeURIComponent(src)}`;
 
-  const downloadOne = (src, idx = 0, isVideo = false) => {
-    const a = document.createElement('a');
-    a.href = proxyUrl(src);
-    const ext = isVideo ? 'mp4' : 'jpg';
-    a.download = `instagram_${Date.now()}_${idx + 1}.${ext}`;
-    a.click();
-  };
-
   const downloadAll = async (images) => {
     setDlAll(true);
     for (let i = 0; i < images.length; i++) {
-      downloadOne(images[i].url, i, false);
-      await new Promise((r) => setTimeout(r, 600)); // slight gap so browser allows multiple downloads
+      const a = document.createElement('a');
+      a.href = proxyUrl(images[i].url);
+      a.download = `instagram_photo_${i + 1}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      await new Promise((r) => setTimeout(r, 600)); // slight pause to prevent browser throttling
     }
     setDlAll(false);
   };
@@ -157,13 +154,14 @@ export default function Home() {
                 </div>
                 {media.title && <p className="media-title">{media.title}</p>}
                 {media.author && <p className="media-author">@{media.author}</p>}
-                <button
-                  onClick={() => downloadOne(media.videoUrl, 0, true)}
+                <a
+                  href={proxyUrl(media.videoUrl)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
+                  download={`instagram_video_${Date.now()}.mp4`}
                 >
                   <DownloadIcon /> Download MP4 Video
-                </button>
+                </a>
               </>
             )}
 
@@ -176,13 +174,14 @@ export default function Home() {
                 </div>
                 {media.title && <p className="media-title">{media.title}</p>}
                 {media.author && <p className="media-author">@{media.author}</p>}
-                <button
-                  onClick={() => downloadOne(media.imageUrl, 0, false)}
+                <a
+                  href={proxyUrl(media.imageUrl)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
+                  download={`instagram_photo_${Date.now()}.jpg`}
                 >
                   <DownloadIcon /> Download HD Photo
-                </button>
+                </a>
               </>
             )}
 
@@ -192,6 +191,7 @@ export default function Home() {
                 <div className="carousel-header">
                   <div className="media-badge">🗂️ {media.count} Photos Found</div>
                   <button
+                    type="button"
                     onClick={() => downloadAll(media.images)}
                     disabled={dlAll}
                     className="btn btn-success btn-download-all"
@@ -221,13 +221,14 @@ export default function Home() {
                           <span className="photo-num">{idx + 1} / {media.count}</span>
                         </div>
                       </div>
-                      <button
-                        onClick={() => downloadOne(img.url, idx, false)}
+                      <a
+                        href={proxyUrl(img.url)}
+                        download={`instagram_photo_${idx + 1}.jpg`}
                         className="btn btn-item-dl"
                         id={`download-img-${idx}`}
                       >
                         <DownloadIcon /> Photo {idx + 1}
-                      </button>
+                      </a>
                     </div>
                   ))}
                 </div>
@@ -253,7 +254,7 @@ function DownloadIcon() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
+      <line x1="12" y1="15" x2="12" y2="3"/>
     </svg>
   );
 }
