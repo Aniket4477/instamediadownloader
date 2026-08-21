@@ -173,9 +173,7 @@ export default function Home() {
       <header className="navbar">
         <div className="nav-container">
           <a href="#" className="nav-brand">
-            <span className="nav-brand-icon">
-              <InstagramIcon />
-            </span>
+            <img src="/logo.png" alt="InstaDown Logo" className="nav-brand-img" />
             <span>InstaDown</span>
           </a>
 
@@ -662,7 +660,7 @@ export default function Home() {
 
           <div className="footer-center">
             <div className="footer-logo-box">
-              <InstagramIcon />
+              <img src="/logo2.png" alt="InstaDown Logo" className="footer-brand-img" />
             </div>
             <div className="footer-brand-title">InstaDown</div>
           </div>
