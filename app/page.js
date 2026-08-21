@@ -217,7 +217,7 @@ export default function Home() {
           </h1>
 
           <p className="hero-subtitle">
-            Paste a public Instagram link and get your video, photo, Reel, or Story in seconds.
+            Paste a public Instagram link and get your video, photo, Reel, or Story in<br />seconds.
           </p>
 
           {/* Filter Tabs Pill */}
