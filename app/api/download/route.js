@@ -95,7 +95,26 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Invalid Instagram URL or handle' }, { status: 400 });
     }
 
-    const isStory = url.includes('/stories/') || url.startsWith('@') || !url.startsWith('http');
+    const tab = (body?.tab || '').toLowerCase();
+
+    // Check if input is a profile link (e.g. instagram.com/username or instagram.com/username/)
+    const isProfileUrl = (() => {
+      if (!url.startsWith('http')) return true;
+      try {
+        const parsed = new URL(url);
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        return segments.length === 1 && !['p', 'reel', 'reels', 'tv', 'explore', 'stories'].includes(segments[0].toLowerCase());
+      } catch {
+        return false;
+      }
+    })();
+
+    const isStory =
+      tab === 'story' ||
+      url.includes('/stories/') ||
+      url.startsWith('@') ||
+      !url.startsWith('http') ||
+      isProfileUrl;
 
     // ── CASE A: Instagram Story Link or Username ──────────────────────────────
     if (isStory) {
