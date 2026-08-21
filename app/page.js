@@ -147,12 +147,14 @@ export default function Home() {
     }
   };
 
-  const scrollToInput = (tabToSet) => {
+  const scrollToTop = (tabToSet) => {
     if (tabToSet) setActiveTab(tabToSet);
-    if (inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 350);
   };
 
   const isMultiItem = media && (media.type === 'carousel' || (media.images && media.images.length > 1));
@@ -184,7 +186,7 @@ export default function Home() {
             <li><a href="#faq" className="nav-link">FAQ</a></li>
           </ul>
 
-          <button onClick={() => scrollToInput()} className="nav-cta-btn">
+          <button onClick={() => scrollToTop()} className="nav-cta-btn">
             Start Downloading
           </button>
         </div>
@@ -196,9 +198,20 @@ export default function Home() {
         {/* ── 1. Hero Section ── */}
         <section className="hero-section" id="hero">
           <div className="hero-pill-badge">
-            <span>• Fast</span>
-            <span>• Public content</span>
-            <span>• No login</span>
+            <span className="hero-pill-item">
+              <span className="glowing-green-dot"></span>
+              Fast
+            </span>
+            <span className="hero-pill-divider">•</span>
+            <span className="hero-pill-item">
+              <span className="glowing-green-dot"></span>
+              Public content
+            </span>
+            <span className="hero-pill-divider">•</span>
+            <span className="hero-pill-item">
+              <span className="glowing-green-dot"></span>
+              No login
+            </span>
           </div>
 
           <h1 className="hero-title">
@@ -467,7 +480,7 @@ export default function Home() {
                 <span style={{ fontSize: '1.25rem' }}>⚠️</span>
                 <span style={{ fontWeight: 600 }}>{error}</span>
               </div>
-              <button onClick={() => scrollToInput()} className="btn-dark-action">
+              <button onClick={() => scrollToTop()} className="btn-dark-action">
                 Try again
               </button>
             </div>
@@ -546,7 +559,7 @@ export default function Home() {
           <p className="section-subtitle">One interface for Reels, videos, posts and public Stories.</p>
 
           <div className="supported-grid">
-            <div className="supported-card" onClick={() => scrollToInput('reel')} style={{ cursor: 'pointer' }}>
+            <div className="supported-card" onClick={() => scrollToTop('reel')} style={{ cursor: 'pointer' }}>
               <div>
                 <div className="supported-icon">▶</div>
                 <h3 className="supported-title">REELS</h3>
@@ -555,7 +568,7 @@ export default function Home() {
               <div className="supported-arrow">↗</div>
             </div>
 
-            <div className="supported-card" onClick={() => scrollToInput('video')} style={{ cursor: 'pointer' }}>
+            <div className="supported-card" onClick={() => scrollToTop('video')} style={{ cursor: 'pointer' }}>
               <div>
                 <div className="supported-icon">◉</div>
                 <h3 className="supported-title">VIDEO POSTS</h3>
@@ -564,7 +577,7 @@ export default function Home() {
               <div className="supported-arrow">↗</div>
             </div>
 
-            <div className="supported-card" onClick={() => scrollToInput('post')} style={{ cursor: 'pointer' }}>
+            <div className="supported-card" onClick={() => scrollToTop('post')} style={{ cursor: 'pointer' }}>
               <div>
                 <div className="supported-icon">▣</div>
                 <h3 className="supported-title">PHOTO POSTS</h3>
@@ -573,7 +586,7 @@ export default function Home() {
               <div className="supported-arrow">↗</div>
             </div>
 
-            <div className="supported-card" onClick={() => scrollToInput('story')} style={{ cursor: 'pointer' }}>
+            <div className="supported-card" onClick={() => scrollToTop('story')} style={{ cursor: 'pointer' }}>
               <div>
                 <div className="supported-icon">▢</div>
                 <h3 className="supported-title">STORIES</h3>
@@ -599,7 +612,7 @@ export default function Home() {
               <p className="feedback-desc">
                 ✓ Link validation &nbsp;•&nbsp; Finding media &nbsp;•&nbsp; Preparing download
               </p>
-              <button onClick={() => scrollToInput()} className="feedback-btn">
+              <button onClick={() => scrollToTop()} className="feedback-btn">
                 Try again
               </button>
             </div>
@@ -612,7 +625,7 @@ export default function Home() {
               <p className="feedback-desc">
                 Please paste a valid public Instagram link or username.
               </p>
-              <button onClick={() => scrollToInput()} className="feedback-btn">
+              <button onClick={() => scrollToTop()} className="feedback-btn">
                 Try again
               </button>
             </div>
@@ -625,7 +638,7 @@ export default function Home() {
               <p className="feedback-desc">
                 This public account currently has no active 24-hour Stories.
               </p>
-              <button onClick={() => scrollToInput()} className="feedback-btn">
+              <button onClick={() => scrollToTop()} className="feedback-btn">
                 Try again
               </button>
             </div>
