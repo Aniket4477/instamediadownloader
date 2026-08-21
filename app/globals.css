@@ -182,10 +182,10 @@ body {
   width: 100%;
   max-width: 1100px;
   margin: 0 auto;
-  padding: 1.25rem 1.5rem 5rem 1.5rem;
+  padding: 2.75rem 1.5rem 5rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 4.5rem;
+  gap: 5rem;
 }
 
 /* ── Hero Section ────────────────────────────────────────── */
@@ -202,12 +202,12 @@ body {
   gap: 0.85rem;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
   border: 1px solid rgba(255, 255, 255, 0.16);
-  padding: 0.35rem 1.15rem;
+  padding: 0.4rem 1.2rem;
   border-radius: var(--radius-pill);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #f1f5f9;
-  margin-bottom: 0.85rem;
+  margin-bottom: 1.25rem;
   box-shadow: 0 0 20px rgba(16, 185, 129, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -274,22 +274,22 @@ body {
 }
 
 .hero-title {
-  font-size: clamp(2rem, 4.2vw, 3rem);
+  font-size: clamp(2.3rem, 5vw, 3.4rem);
   font-weight: 800;
   letter-spacing: -0.035em;
   color: #ffffff;
   line-height: 1.15;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.85rem;
   max-width: 850px;
 }
 
 .hero-subtitle {
-  font-size: 0.96rem;
+  font-size: 1rem;
   color: var(--text-muted);
   max-width: 900px;
   width: 100%;
-  line-height: 1.5;
-  margin-bottom: 1.25rem;
+  line-height: 1.55;
+  margin-bottom: 1.75rem;
   white-space: normal;
 }
 
@@ -301,7 +301,7 @@ body {
   border-radius: var(--radius-pill);
   padding: 4px;
   gap: 4px;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.75rem;
   backdrop-filter: blur(12px);
 }
 
@@ -312,7 +312,7 @@ body {
   font-family: inherit;
   font-size: 0.82rem;
   font-weight: 600;
-  padding: 0.42rem 1.05rem;
+  padding: 0.45rem 1.1rem;
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -332,13 +332,13 @@ body {
 /* ── Hero Glass Input Card ───────────────────────────────── */
 .input-glass-card {
   width: 100%;
-  max-width: 660px;
+  max-width: 670px;
   background: var(--card-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  padding: 1.35rem 1.75rem 1.25rem 1.75rem;
+  padding: 1.6rem 2rem 1.45rem 2rem;
   box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   text-align: left;
 }
@@ -347,14 +347,14 @@ body {
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: 0.65rem;
+  margin-bottom: 0.8rem;
 }
 
 .input-row {
   position: relative;
   display: flex;
   align-items: center;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.85rem;
 }
 
 .input-icon-left {
