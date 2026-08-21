@@ -1,124 +1,120 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 
-/**
- * Runs yt-dlp --dump-json on the given URL and returns parsed JSON metadata.
- * yt-dlp is used for maximum reliability (Option C) vs fragile HTML scraping.
- */
-function getMediaInfo(url) {
+const YTDLP_BIN =
+  process.env.YTDLP_PATH ||
+  'C:\\Users\\anike\\AppData\\Roaming\\Python\\Python314\\Scripts\\yt-dlp.exe';
+
+// ─── yt-dlp: best for videos/reels ──────────────────────────────────────────
+
+function ytdlpJson(url) {
   return new Promise((resolve, reject) => {
-    const args = [
-      '--dump-json',       // Output media info as JSON, don't download
-      '--no-playlist',     // Single item only
-      '--quiet',           // Suppress progress output
-      url,
-    ];
-
-    // Use full path since pip installs to user Scripts dir (not on PATH by default).
-    // Falls back to bare 'yt-dlp' for VPS/production environments where it's global.
-    const ytdlpBin = process.env.YTDLP_PATH ||
-      'C:\\Users\\anike\\AppData\\Roaming\\Python\\Python314\\Scripts\\yt-dlp.exe';
-    const proc = spawn(ytdlpBin, args, { shell: true });
-
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (data) => { stdout += data.toString(); });
-    proc.stderr.on('data', (data) => { stderr += data.toString(); });
-
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new Error(stderr || `yt-dlp exited with code ${code}`));
-      }
-      try {
-        const info = JSON.parse(stdout.trim());
-        resolve(info);
-      } catch (e) {
-        reject(new Error('Failed to parse yt-dlp output'));
-      }
-    });
-
-    proc.on('error', (err) => {
-      reject(new Error(`yt-dlp not found: ${err.message}`));
+    const args = ['--dump-single-json', '--no-playlist', '--quiet', url];
+    const proc = spawn(YTDLP_BIN, args, { shell: false });
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d; });
+    proc.stderr.on('data', (d) => { stderr += d; });
+    proc.on('error', (e) => reject(new Error(`yt-dlp spawn error: ${e.message}`)));
+    proc.on('close', () => {
+      if (!stdout.trim()) return reject(new Error(stderr.trim() || 'yt-dlp: no output'));
+      try { resolve(JSON.parse(stdout.trim())); }
+      catch { reject(new Error('Failed to parse yt-dlp JSON')); }
     });
   });
 }
+
+// ─── oEmbed: official Instagram API — works for image posts ─────────────────
+
+async function oembedFetch(postUrl) {
+  const endpoint = `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(postUrl)}`;
+  const res = await fetch(endpoint, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
+  if (!res.ok) throw new Error(`oEmbed HTTP ${res.status}`);
+  return res.json(); // { thumbnail_url, title, author_name, ... }
+}
+
+// ─── Validate URL ─────────────────────────────────────────────────────────────
 
 function validateInstagramUrl(url) {
   try {
     const parsed = new URL(url);
     return parsed.hostname.includes('instagram.com');
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { url } = body;
+    const url = (body?.url || '').trim();
 
-    if (!url || typeof url !== 'string') {
+    if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
-
-    if (!validateInstagramUrl(url.trim())) {
+    if (!validateInstagramUrl(url)) {
       return NextResponse.json({ error: 'Invalid Instagram URL' }, { status: 400 });
     }
 
-    let info;
+    // ── Step 1: Try yt-dlp (handles reels/videos reliably) ───────────────────
     try {
-      info = await getMediaInfo(url.trim());
-    } catch (err) {
-      const msg = err.message || '';
-      console.error('yt-dlp error:', msg);
+      const info = await ytdlpJson(url);
 
-      if (msg.includes('yt-dlp not found')) {
-        return NextResponse.json(
-          { error: 'yt-dlp is not installed on this server.' },
-          { status: 500 }
-        );
+      if (info.url) {
+        // Success — it's a downloadable video
+        return NextResponse.json({
+          type: 'video',
+          videoUrl: info.url,
+          imageUrl: info.thumbnail || null,
+          thumbnail: info.thumbnail || null,
+          title: info.title || '',
+          duration: info.duration || null,
+        });
       }
-      if (msg.includes('Private') || msg.includes('login required') || msg.includes('not available')) {
+    } catch (ytErr) {
+      const msg = (ytErr.message || '').toLowerCase();
+
+      // Hard fail: private or login required
+      if (msg.includes('login required') || msg.includes('private')) {
         return NextResponse.json(
-          { error: 'This post is private or login is required to access it.' },
+          { error: 'This post is private or requires login.' },
           { status: 403 }
         );
       }
-      return NextResponse.json(
-        { error: 'Could not find media. The post may be private or removed.' },
-        { status: 404 }
-      );
+      // "No video formats found" or similar → it's an image post → try oEmbed
+      console.warn('[download] yt-dlp failed, trying oEmbed fallback:', ytErr.message);
     }
 
-    // yt-dlp info object fields we care about
-    const videoUrl = info.url || info.webpage_url || null;
-    const thumbnail = info.thumbnail || null;
-    const ext = info.ext || 'mp4';
-    const isVideo = ext !== 'jpg' && ext !== 'jpeg' && ext !== 'png' && ext !== 'webp';
-
-    // For image posts, yt-dlp puts the image URL in `url`
-    const imageUrl = !isVideo ? videoUrl : thumbnail;
-    const finalVideoUrl = isVideo ? videoUrl : null;
-
-    if (!finalVideoUrl && !imageUrl) {
-      return NextResponse.json(
-        { error: 'Could not find media in this post.' },
-        { status: 404 }
-      );
+    // ── Step 2: oEmbed fallback — works for public image posts/carousels ──────
+    try {
+      const oembed = await oembedFetch(url);
+      if (oembed.thumbnail_url) {
+        return NextResponse.json({
+          type: 'image',
+          videoUrl: null,
+          imageUrl: oembed.thumbnail_url,
+          thumbnail: oembed.thumbnail_url,
+          title: oembed.title || '',
+          duration: null,
+          author: oembed.author_name || '',
+        });
+      }
+    } catch (oembedErr) {
+      console.error('[download] oEmbed failed:', oembedErr.message);
     }
 
-    return NextResponse.json({
-      type: isVideo ? 'video' : 'image',
-      videoUrl: finalVideoUrl,
-      imageUrl,
-      thumbnail,
-      title: info.title || '',
-      duration: info.duration || null,
-    });
-
+    // ── Nothing worked ────────────────────────────────────────────────────────
+    return NextResponse.json(
+      { error: 'Could not find media. The post may be private or removed.' },
+      { status: 404 }
+    );
   } catch (error) {
-    console.error('Download API Error:', error);
+    console.error('[download] Unexpected error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
