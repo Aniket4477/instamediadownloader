@@ -174,7 +174,7 @@ export default function Home() {
         <div className="nav-container">
           <a href="#" className="nav-brand">
             <img src="/logo.png" alt="InstaDown Logo" className="nav-brand-img" />
-            <span>InstaDown</span>
+            <span className="nav-brand-text">InstaDown</span>
           </a>
 
           <ul className="nav-links">

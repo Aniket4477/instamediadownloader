@@ -104,11 +104,19 @@ body {
 .nav-brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
   text-decoration: none;
-  color: #fff;
   font-weight: 800;
   font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.nav-brand-text {
+  background: linear-gradient(90deg, #6366f1 0%, #a855f7 50%, #e879f9 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 800;
   letter-spacing: -0.02em;
 }
 
@@ -1040,9 +1048,12 @@ body {
 }
 
 .footer-brand-title {
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   font-weight: 800;
-  color: #fff;
+  background: linear-gradient(90deg, #6366f1 0%, #a855f7 50%, #e879f9 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   letter-spacing: -0.02em;
 }
 
