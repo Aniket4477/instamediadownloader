@@ -294,198 +294,170 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── 2. Result State Section ── */}
-        <section className="result-section" id="result-state" ref={resultRef}>
-          <span className="section-tag">RESULT STATE</span>
-          <h2 className="section-title">Your media is ready.</h2>
-          <p className="section-subtitle">Reusable result card for video, image, carousel and Story downloads.</p>
+        {/* ── 2. Dynamic Result Section (Only appears when media or error is ready) ── */}
+        {(media || error) && (
+          <section className="result-section" id="result-state" ref={resultRef}>
+            <span className="section-tag">RESULT STATE</span>
+            <h2 className="section-title">Your media is ready.</h2>
+            <p className="section-subtitle">Reusable result card for video, image, carousel and Story downloads.</p>
 
-          {/* Active Results Card */}
-          {media && (
-            <div className="result-card-wrap">
-              {/* Single Reel / Video / Single Story Video */}
-              {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
-                <div className="result-card-inner">
-                  <div className="result-media-frame">
-                    <video
-                      src={previewUrl(media.videoUrl || media.images?.[0]?.url)}
-                      controls
-                      className="result-media-video"
-                      poster={previewUrl(media.thumbnail || media.images?.[0]?.thumbnail)}
-                      playsInline
-                    />
-                  </div>
-                  <div className="result-info">
-                    <div className="result-breadcrumb">
-                      Instagram &gt; {media.type === 'story' ? 'Story' : 'Reel'}
+            {/* Active Results Card */}
+            {media && (
+              <div className="result-card-wrap">
+                {/* Single Reel / Video / Single Story Video */}
+                {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
+                  <div className="result-card-inner">
+                    <div className="result-media-frame">
+                      <video
+                        src={previewUrl(media.videoUrl || media.images?.[0]?.url)}
+                        controls
+                        className="result-media-video"
+                        poster={previewUrl(media.thumbnail || media.images?.[0]?.thumbnail)}
+                        playsInline
+                      />
                     </div>
-                    <h3 className="result-media-title">{media.title || 'Media ready'}</h3>
-                    <div className="result-meta-pill">
-                      <span>1080 × 1920</span>
-                      <span>•</span>
-                      <span>MP4</span>
-                      {media.username && (
-                        <>
-                          <span>•</span>
-                          <span>@{media.username}</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="result-actions">
-                      <a
-                        href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
-                        className="btn-primary-gradient"
-                        download={media.type === 'story' ? `instagram_story_${Date.now()}.mp4` : `instagram_video_${Date.now()}.mp4`}
-                      >
-                        <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Video'}
-                      </a>
-                      <button type="button" onClick={handleCopyLink} className="btn-dark-action">
-                        {copied ? '✓ Copied' : 'Copy Link'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Single Photo / Story Image */}
-              {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
-                <div className="result-card-inner">
-                  <div className="result-media-frame">
-                    <img
-                      src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
-                      alt="Instagram media"
-                      className="result-media-img"
-                    />
-                  </div>
-                  <div className="result-info">
-                    <div className="result-breadcrumb">
-                      Instagram &gt; {media.type === 'story' ? 'Story' : 'Post'}
-                    </div>
-                    <h3 className="result-media-title">{media.title || 'Image ready'}</h3>
-                    <div className="result-meta-pill">
-                      <span>HD Resolution</span>
-                      <span>•</span>
-                      <span>JPG</span>
-                      {media.username && (
-                        <>
-                          <span>•</span>
-                          <span>@{media.username}</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="result-actions">
-                      <a
-                        href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
-                        className="btn-primary-gradient"
-                        download={media.type === 'story' ? `instagram_story_${Date.now()}.jpg` : `instagram_image_${Date.now()}.jpg`}
-                      >
-                        <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Image'}
-                      </a>
-                      <button type="button" onClick={handleCopyLink} className="btn-dark-action">
-                        {copied ? '✓ Copied' : 'Copy Link'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Multi-Item Carousel / Multiple Stories */}
-              {isMultiItem && (
-                <div className="multi-grid-wrap">
-                  <div className="multi-grid-header">
-                    <div className="result-breadcrumb">
-                      Instagram &gt; {media.type === 'story' ? `${media.count} Active Stories` : `${media.count} Carousel Images`}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => downloadAll(media.images)}
-                      disabled={dlAll}
-                      className="btn-primary-gradient"
-                    >
-                      {dlAll ? 'Downloading All...' : `Download All (${media.count})`}
-                    </button>
-                  </div>
-
-                  <div className="multi-grid-cards">
-                    {media.images.map((item, idx) => (
-                      <div key={idx} className="multi-grid-card">
-                        <div className="multi-grid-thumb">
-                          {item.type === 'video' ? (
-                            <video
-                              src={previewUrl(item.url)}
-                              poster={item.thumbnail ? previewUrl(item.thumbnail) : undefined}
-                              controls
-                              playsInline
-                            />
-                          ) : (
-                            <img
-                              src={previewUrl(item.url)}
-                              alt={`Item ${idx + 1}`}
-                              onClick={() => setSelectedPhoto(previewUrl(item.url))}
-                              style={{ cursor: 'pointer' }}
-                            />
-                          )}
-                          <span className="multi-grid-badge">{idx + 1}/{media.count}</span>
-                        </div>
-                        <a
-                          href={downloadUrl(item.url)}
-                          download={media.type === 'story' ? `instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}` : `instagram_image_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
-                          className="btn-dark-action"
-                          style={{ justifyContent: 'center', fontSize: '0.78rem', padding: '0.5rem' }}
-                        >
-                          <DownloadIcon /> {getItemButtonLabel(item, idx)}
-                        </a>
+                    <div className="result-info">
+                      <div className="result-breadcrumb">
+                        Instagram &gt; {media.type === 'story' ? 'Story' : 'Reel'}
                       </div>
-                    ))}
+                      <h3 className="result-media-title">{media.title || 'Media ready'}</h3>
+                      <div className="result-meta-pill">
+                        <span>1080 × 1920</span>
+                        <span>•</span>
+                        <span>MP4</span>
+                        {media.username && (
+                          <>
+                            <span>•</span>
+                            <span>@{media.username}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="result-actions">
+                        <a
+                          href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
+                          className="btn-primary-gradient"
+                          download={media.type === 'story' ? `instagram_story_${Date.now()}.mp4` : `instagram_video_${Date.now()}.mp4`}
+                        >
+                          <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Video'}
+                        </a>
+                        <button type="button" onClick={handleCopyLink} className="btn-dark-action">
+                          {copied ? '✓ Copied' : 'Copy Link'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
 
-          {/* Fallback Static Placeholder when no media is fetched */}
-          {!media && !error && (
-            <div className="result-card-wrap" style={{ opacity: 0.65 }}>
-              <div className="result-card-inner">
-                <div className="result-media-frame" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <span style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>Media Preview Area</span>
-                </div>
-                <div className="result-info">
-                  <div className="result-breadcrumb">Instagram &gt; Reel</div>
-                  <h3 className="result-media-title">Media name</h3>
-                  <div className="result-meta-pill">
-                    <span>1080 × 1920</span>
-                    <span>•</span>
-                    <span>MP4</span>
-                    <span>•</span>
-                    <span>12.4 MB</span>
+                {/* Single Photo / Story Image */}
+                {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
+                  <div className="result-card-inner">
+                    <div className="result-media-frame">
+                      <img
+                        src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
+                        alt="Instagram media"
+                        className="result-media-img"
+                      />
+                    </div>
+                    <div className="result-info">
+                      <div className="result-breadcrumb">
+                        Instagram &gt; {media.type === 'story' ? 'Story' : 'Post'}
+                      </div>
+                      <h3 className="result-media-title">{media.title || 'Image ready'}</h3>
+                      <div className="result-meta-pill">
+                        <span>HD Resolution</span>
+                        <span>•</span>
+                        <span>JPG</span>
+                        {media.username && (
+                          <>
+                            <span>•</span>
+                            <span>@{media.username}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="result-actions">
+                        <a
+                          href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
+                          className="btn-primary-gradient"
+                          download={media.type === 'story' ? `instagram_story_${Date.now()}.jpg` : `instagram_image_${Date.now()}.jpg`}
+                        >
+                          <DownloadIcon /> {media.type === 'story' ? 'Download Story' : 'Download Image'}
+                        </a>
+                        <button type="button" onClick={handleCopyLink} className="btn-dark-action">
+                          {copied ? '✓ Copied' : 'Copy Link'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="result-actions">
-                    <button className="btn-primary-gradient" style={{ pointerEvents: 'none', opacity: 0.8 }}>
-                      Download Video
-                    </button>
-                    <button className="btn-dark-action" style={{ pointerEvents: 'none', opacity: 0.8 }}>
-                      Copy Link
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+                )}
 
-          {/* Error Message Display */}
-          {error && (
-            <div className="result-card-wrap" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
-              <div style={{ color: '#fca5a5', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                <span style={{ fontSize: '1.25rem' }}>⚠️</span>
-                <span style={{ fontWeight: 600 }}>{error}</span>
+                {/* Multi-Item Carousel / Multiple Stories */}
+                {isMultiItem && (
+                  <div className="multi-grid-wrap">
+                    <div className="multi-grid-header">
+                      <div className="result-breadcrumb">
+                        Instagram &gt; {media.type === 'story' ? `${media.count} Active Stories` : `${media.count} Carousel Images`}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => downloadAll(media.images)}
+                        disabled={dlAll}
+                        className="btn-primary-gradient"
+                      >
+                        {dlAll ? 'Downloading All...' : `Download All (${media.count})`}
+                      </button>
+                    </div>
+
+                    <div className="multi-grid-cards">
+                      {media.images.map((item, idx) => (
+                        <div key={idx} className="multi-grid-card">
+                          <div className="multi-grid-thumb">
+                            {item.type === 'video' ? (
+                              <video
+                                src={previewUrl(item.url)}
+                                poster={item.thumbnail ? previewUrl(item.thumbnail) : undefined}
+                                controls
+                                playsInline
+                              />
+                            ) : (
+                              <img
+                                src={previewUrl(item.url)}
+                                alt={`Item ${idx + 1}`}
+                                onClick={() => setSelectedPhoto(previewUrl(item.url))}
+                                style={{ cursor: 'pointer' }}
+                              />
+                            )}
+                            <span className="multi-grid-badge">{idx + 1}/{media.count}</span>
+                          </div>
+                          <a
+                            href={downloadUrl(item.url)}
+                            download={media.type === 'story' ? `instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}` : `instagram_image_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
+                            className="btn-dark-action"
+                            style={{ justifyContent: 'center', fontSize: '0.78rem', padding: '0.5rem' }}
+                          >
+                            <DownloadIcon /> {getItemButtonLabel(item, idx)}
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <button onClick={() => scrollToTop()} className="btn-dark-action">
-                Try again
-              </button>
-            </div>
-          )}
-        </section>
+            )}
+
+            {/* Error Message Display */}
+            {error && (
+              <div className="result-card-wrap" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+                <div style={{ color: '#fca5a5', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                  <span style={{ fontSize: '1.25rem' }}>⚠️</span>
+                  <span style={{ fontWeight: 600 }}>{error}</span>
+                </div>
+                <button onClick={() => scrollToTop()} className="btn-dark-action">
+                  Try again
+                </button>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ── 3. How It Works (Three Steps) ── */}
         <section className="how-it-works-section" id="how-it-works">
