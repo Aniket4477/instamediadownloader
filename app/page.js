@@ -70,7 +70,7 @@ export default function Home() {
       const a = document.createElement('a');
       a.href = downloadUrl(images[i].url);
       const ext = images[i].type === 'video' ? 'mp4' : 'jpg';
-      a.download = `instagram_media_${i + 1}.${ext}`;
+      a.download = `instagram_story_${i + 1}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -79,7 +79,9 @@ export default function Home() {
     setDlAll(false);
   };
 
-  const isCarouselOrStory = media && (media.type === 'carousel' || media.type === 'story' || (media.images && media.images.length > 1));
+  const isMultiItem = media && (media.type === 'carousel' || (media.images && media.images.length > 1));
+  const isSingleStoryVideo = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'video';
+  const isSingleStoryImage = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'image';
 
   return (
     <>
@@ -158,60 +160,66 @@ export default function Home() {
         {media && (
           <div className="media-preview">
             
-            {/* ── 1. Video / Reel ── */}
-            {media.type === 'video' && (
+            {/* ── 1. Reel / Video Post / Single Story Video ── */}
+            {(media.type === 'video' || isSingleStoryVideo) && (
               <>
-                <div className="media-badge">🎬 HD Video Ready</div>
+                <div className="media-badge">
+                  {media.type === 'story' ? '📖 Instagram Story Video Ready' : '🎬 HD Video Ready'}
+                </div>
                 <div className="video-wrap">
                   <video
-                    src={previewUrl(media.videoUrl)}
+                    src={previewUrl(media.videoUrl || media.images?.[0]?.url)}
                     controls
                     className="media-element"
-                    poster={previewUrl(media.thumbnail)}
+                    poster={previewUrl(media.thumbnail || media.images?.[0]?.thumbnail)}
                     playsInline
                   />
                 </div>
                 {media.title && <p className="media-title">{media.title}</p>}
+                {media.username && <p className="media-author">@{media.username}</p>}
                 {media.author && <p className="media-author">@{media.author}</p>}
                 <a
-                  href={downloadUrl(media.videoUrl)}
+                  href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
-                  download={`instagram_video_${Date.now()}.mp4`}
+                  download={`instagram_story_${Date.now()}.mp4`}
                 >
-                  <DownloadIcon /> Download MP4 Video
+                  <DownloadIcon /> Download Story Video (MP4)
                 </a>
               </>
             )}
 
-            {/* ── 2. Single Photo Post ── */}
-            {media.type === 'image' && !isCarouselOrStory && (
+            {/* ── 2. Single Photo Post / Single Story Image ── */}
+            {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
               <>
-                <div className="media-badge">🖼️ HD Photo Ready</div>
+                <div className="media-badge">
+                  {media.type === 'story' ? '📖 Instagram Story Photo Ready' : '🖼️ HD Photo Ready'}
+                </div>
                 <div className="single-img-wrap">
                   <img
-                    src={previewUrl(media.imageUrl)}
-                    alt="Instagram post"
+                    src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
+                    alt="Instagram story"
                     className="media-element"
                     referrerPolicy="no-referrer"
                     crossOrigin="anonymous"
                   />
                 </div>
                 {media.title && <p className="media-title">{media.title}</p>}
+                {media.username && <p className="media-author">@{media.username}</p>}
                 {media.author && <p className="media-author">@{media.author}</p>}
                 <a
-                  href={downloadUrl(media.imageUrl)}
+                  href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
-                  download={`instagram_photo_${Date.now()}.jpg`}
+                  download={`instagram_story_${Date.now()}.jpg`}
                 >
-                  <DownloadIcon /> Download HD Photo
+                  <DownloadIcon /> Download Story Photo (HD)
                 </a>
               </>
             )}
 
-            {/* ── 3. Multi-Photo Carousel / Story List ── */}
-            {isCarouselOrStory && (
+            {/* ── 3. Multi-Photo Carousel / Multiple Stories ── */}
+            {isMultiItem && !isSingleStoryVideo && (
               <>
                 <div className="carousel-header">
                   <div className="media-badge">
