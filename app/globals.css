@@ -107,8 +107,8 @@ body {
 /* ── Tabs ────────────────────────────────────────────────── */
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -118,16 +118,17 @@ body {
 
 .tab-btn {
   font-family: inherit;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 600;
   border: none;
   border-radius: 8px;
-  padding: 0.55rem 0.25rem;
+  padding: 0.55rem 0.15rem;
   cursor: pointer;
   transition: all 0.2s ease;
   background: transparent;
   color: var(--muted);
   text-align: center;
+  white-space: nowrap;
 }
 
 .tab-btn:hover:not(.tab-active) {

@@ -2,9 +2,10 @@
 import { useState } from 'react';
 
 const TABS = [
-  { id: 'auto',  label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram Reel, Video, or Post link...' },
+  { id: 'auto',  label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram Reel, Video, Post, or Story link...' },
   { id: 'reel',  label: '🎬 Reel / Video', placeholder: 'https://www.instagram.com/reel/... or /tv/...' },
   { id: 'post',  label: '🖼️ Post / Carousel', placeholder: 'https://www.instagram.com/p/...' },
+  { id: 'story', label: '📖 Story', placeholder: 'https://www.instagram.com/stories/... or @username' },
 ];
 
 export default function Home() {
@@ -53,13 +54,11 @@ export default function Home() {
     }
   };
 
-  // Inline preview proxy (bypasses Instagram CDN hotlink block)
   const previewUrl = (src) => {
     if (!src) return '';
     return `/api/proxy?url=${encodeURIComponent(src)}`;
   };
 
-  // Download proxy with attachment header
   const downloadUrl = (src) => {
     if (!src) return '';
     return `/api/proxy?url=${encodeURIComponent(src)}&dl=1`;
@@ -70,7 +69,8 @@ export default function Home() {
     for (let i = 0; i < images.length; i++) {
       const a = document.createElement('a');
       a.href = downloadUrl(images[i].url);
-      a.download = `instagram_photo_${i + 1}.jpg`;
+      const ext = images[i].type === 'video' ? 'mp4' : 'jpg';
+      a.download = `instagram_media_${i + 1}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -79,7 +79,7 @@ export default function Home() {
     setDlAll(false);
   };
 
-  const isCarousel = media && (media.type === 'carousel' || (media.images && media.images.length > 1));
+  const isCarouselOrStory = media && (media.type === 'carousel' || media.type === 'story' || (media.images && media.images.length > 1));
 
   return (
     <>
@@ -90,16 +90,16 @@ export default function Home() {
             <span className="logo-icon">✨</span>
             <h1 className="title">InstaDown</h1>
           </div>
-          <p className="subtitle">Self-hosted Instagram Reels, Videos &amp; Photo Downloader</p>
+          <p className="subtitle">Self-hosted Instagram Reels, Videos, Posts &amp; Stories Downloader</p>
           <div className="badge-features">
             <span>⚡ Direct HD</span>
-            <span>🖼️ Live Previews</span>
+            <span>🚫 No API Keys</span>
             <span>🔒 100% Free &amp; Private</span>
           </div>
         </div>
 
         {/* Tab Selection */}
-        <div className="tabs" role="tablist">
+        <div className="tabs tabs-4" role="tablist">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -117,7 +117,7 @@ export default function Home() {
         <form onSubmit={handleFetch} className="form">
           <div className="input-wrap">
             <input
-              type="url"
+              type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={currentTab.placeholder}
@@ -185,7 +185,7 @@ export default function Home() {
             )}
 
             {/* ── 2. Single Photo Post ── */}
-            {media.type === 'image' && !isCarousel && (
+            {media.type === 'image' && !isCarouselOrStory && (
               <>
                 <div className="media-badge">🖼️ HD Photo Ready</div>
                 <div className="single-img-wrap">
@@ -210,11 +210,13 @@ export default function Home() {
               </>
             )}
 
-            {/* ── 3. Multi-Photo Carousel Post ── */}
-            {isCarousel && (
+            {/* ── 3. Multi-Photo Carousel / Story List ── */}
+            {isCarouselOrStory && (
               <>
                 <div className="carousel-header">
-                  <div className="media-badge">🗂️ {media.count} Photos Found</div>
+                  <div className="media-badge">
+                    {media.type === 'story' ? `📖 ${media.count} Story Items` : `🗂️ ${media.count} Photos Found`}
+                  </div>
                   <button
                     type="button"
                     onClick={() => downloadAll(media.images)}
@@ -238,38 +240,43 @@ export default function Home() {
                 </div>
 
                 <div className="carousel-grid">
-                  {media.images.map((img, idx) => (
+                  {media.images.map((item, idx) => (
                     <div key={idx} className="carousel-item">
                       <div
                         className="carousel-img-wrap"
-                        onClick={() => setSelectedPhoto(previewUrl(img.url))}
+                        onClick={() => setSelectedPhoto(previewUrl(item.url))}
                         title="Click to view full preview"
                       >
-                        <img
-                          src={previewUrl(img.url)}
-                          alt={`Photo ${idx + 1}`}
-                          className="carousel-img"
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                          crossOrigin="anonymous"
-                        />
+                        {item.type === 'video' ? (
+                          <video src={previewUrl(item.url)} className="carousel-img" />
+                        ) : (
+                          <img
+                            src={previewUrl(item.url)}
+                            alt={`Media ${idx + 1}`}
+                            className="carousel-img"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            crossOrigin="anonymous"
+                          />
+                        )}
                         <div className="carousel-overlay">
                           <span className="photo-num">{idx + 1} / {media.count}</span>
                         </div>
                       </div>
                       <a
-                        href={downloadUrl(img.url)}
-                        download={`instagram_photo_${idx + 1}.jpg`}
+                        href={downloadUrl(item.url)}
+                        download={`instagram_media_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
                         className="btn btn-item-dl"
                         id={`download-img-${idx}`}
                       >
-                        <DownloadIcon /> Photo {idx + 1}
+                        <DownloadIcon /> {item.type === 'video' ? 'Video' : 'Photo'} {idx + 1}
                       </a>
                     </div>
                   ))}
                 </div>
 
                 {media.title && <p className="media-title">{media.title}</p>}
+                {media.username && <p className="media-author">@{media.username}</p>}
                 {media.author && <p className="media-author">@{media.author}</p>}
               </>
             )}
@@ -285,14 +292,14 @@ export default function Home() {
             <img src={selectedPhoto} alt="Full preview" className="modal-img" />
             <button className="modal-close" onClick={() => setSelectedPhoto(null)}>✕</button>
             <a href={selectedPhoto.replace('dl=0', 'dl=1') + '&dl=1'} download className="btn btn-success modal-dl-btn">
-              <DownloadIcon /> Download Photo
+              <DownloadIcon /> Download Media
             </a>
           </div>
         </div>
       )}
 
       <p className="footer-text">
-        Self-hosted open-source downloader · Supports Reels, Videos, Photos &amp; Carousels · For personal use only
+        Self-hosted open-source downloader · Supports Reels, Videos, Photos, Carousels &amp; Stories · For personal use only
       </p>
     </>
   );

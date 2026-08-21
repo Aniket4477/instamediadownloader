@@ -30,9 +30,6 @@ function runYtdlp(url, args = []) {
   });
 }
 
-/**
- * Runs yt-dlp with flat playlist to trigger per-item shortcodes in stderr for carousels
- */
 function runYtdlpCarousel(url) {
   return new Promise((resolve) => {
     const proc = spawn(
@@ -60,9 +57,6 @@ function parseShortcodesFromStderr(stderr) {
   return [...new Set(matches.map((m) => m[1]))];
 }
 
-/**
- * Public Instagram oEmbed fetch (Preserves original signed CDN URLs)
- */
 async function oembedFetch(shortcodeOrUrl) {
   const postUrl = shortcodeOrUrl.startsWith('http')
     ? shortcodeOrUrl
@@ -71,18 +65,39 @@ async function oembedFetch(shortcodeOrUrl) {
   const res = await fetch(endpoint, {
     headers: {
       'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     },
   });
   if (!res.ok) throw new Error(`oEmbed HTTP ${res.status}`);
   return res.json();
 }
 
+/**
+ * Checks story via the local story service endpoint on port 4000
+ */
+async function fetchStoryMedia(storyUrl) {
+  try {
+    const res = await fetch('http://localhost:4000/api/instagram/story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: storyUrl }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return { ok: false, status: 503, data: { error: 'PROVIDERS_UNAVAILABLE', message: err.message } };
+  }
+}
+
 function validateInstagramUrl(url) {
   try {
-    return new URL(url).hostname.includes('instagram.com');
-  } catch { return false; }
+    if (url.startsWith('@')) return true;
+    const parsed = new URL(url);
+    return parsed.hostname.includes('instagram.com');
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(request) {
@@ -91,13 +106,49 @@ export async function POST(request) {
     const url = (body?.url || '').trim();
 
     if (!url) {
-      return NextResponse.json({ error: 'Instagram URL is required' }, { status: 400 });
+      return NextResponse.json({ error: 'Instagram URL or handle is required' }, { status: 400 });
     }
     if (!validateInstagramUrl(url)) {
-      return NextResponse.json({ error: 'Invalid Instagram URL' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid Instagram URL or handle' }, { status: 400 });
     }
 
-    // ── STEP 1: Check if it's a Video / Reel via self-hosted yt-dlp ──────
+    const isStory = url.includes('/stories/') || url.startsWith('@');
+
+    // ── CASE A: Instagram Story Link ──────────────────────────────────────────
+    if (isStory) {
+      const storyRes = await fetchStoryMedia(url);
+      if (storyRes.ok && storyRes.data?.stories?.length > 0) {
+        const stories = storyRes.data.stories;
+        return NextResponse.json({
+          success: true,
+          type: 'story',
+          username: storyRes.data.username,
+          count: stories.length,
+          images: stories.map((s) => ({
+            url: s.url,
+            thumbnail: s.thumbnail || s.url,
+            type: s.type,
+          })),
+        });
+      }
+
+      if (storyRes.data?.error === 'PRIVATE_ACCOUNT') {
+        return NextResponse.json(
+          { error: 'This account is private. Only public Stories can be downloaded.' },
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error:
+            'Unable to fetch Story. Instagram Stories require active authorization or the Story may have expired (24h limit).',
+        },
+        { status: 503 }
+      );
+    }
+
+    // ── CASE B: Reels / Video Posts via yt-dlp ────────────────────────────────
     const { info, stderr } = await runYtdlp(url, ['--dump-single-json']);
 
     if (info?.url) {
@@ -115,35 +166,32 @@ export async function POST(request) {
       });
     }
 
-    // Check for explicit private post or login blocks
     const stderrLow = stderr.toLowerCase();
     if (stderrLow.includes('login required') || stderrLow.includes('private video')) {
       return NextResponse.json(
-        { error: 'This post is private or requires login. Only public posts can be downloaded.' },
+        { error: 'This post is private or requires login. Only public content can be downloaded.' },
         { status: 403 }
       );
     }
 
-    // ── STEP 2: Multi-photo Carousel or Single Image Post ────────────────
+    // ── CASE C: Multi-Photo Carousel or Single Photo ──────────────────────────
     const { stderr: stderr2 } = await runYtdlpCarousel(url);
     const allStderr = stderr + '\n' + stderr2;
     const shortcodes = parseShortcodesFromStderr(allStderr);
 
-    // Case A: Single Image Post
     if (shortcodes.length === 0) {
       try {
         const oembed = await oembedFetch(url);
         if (oembed.thumbnail_url) {
-          const imageUrl = oembed.thumbnail_url; // keep valid cryptographic signature
           return NextResponse.json({
             success: true,
             type: 'image',
             videoUrl: null,
-            imageUrl,
-            thumbnail: imageUrl,
+            imageUrl: oembed.thumbnail_url,
+            thumbnail: oembed.thumbnail_url,
             title: oembed.title || 'Instagram Photo',
             author: oembed.author_name || '',
-            images: [{ url: imageUrl, thumbnail: imageUrl }],
+            images: [{ url: oembed.thumbnail_url, thumbnail: oembed.thumbnail_url }],
             count: 1,
           });
         }
@@ -152,26 +200,27 @@ export async function POST(request) {
       }
 
       return NextResponse.json(
-        { error: 'Could not extract media. Please verify the link is a public Instagram Post or Reel.' },
+        { error: 'Could not extract media. Please verify the link is public.' },
         { status: 404 }
       );
     }
 
-    // Case B: Multi-Photo Carousel Post
+    // Multi-Photo Carousel
     const results = await Promise.allSettled(
       shortcodes.map((sc) => oembedFetch(sc))
     );
 
     const images = results
       .filter((r) => r.status === 'fulfilled' && r.value?.thumbnail_url)
-      .map((r) => {
-        const validUrl = r.value.thumbnail_url;
-        return { url: validUrl, thumbnail: validUrl, title: r.value.title || '' };
-      });
+      .map((r) => ({
+        url: r.value.thumbnail_url,
+        thumbnail: r.value.thumbnail_url,
+        title: r.value.title || '',
+      }));
 
     if (images.length === 0) {
       return NextResponse.json(
-        { error: 'Could not load photos from this carousel post.' },
+        { error: 'Could not load photos from this post.' },
         { status: 404 }
       );
     }
