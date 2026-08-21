@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'child_process';
+import { extractStoriesViaBrowser } from './storyExtractor';
 
 const YTDLP_BIN =
   process.env.YTDLP_PATH ||
@@ -72,27 +73,9 @@ async function oembedFetch(shortcodeOrUrl) {
   return res.json();
 }
 
-/**
- * Checks story via the local story service endpoint on port 4000
- */
-async function fetchStoryMedia(storyUrl) {
-  try {
-    const res = await fetch('http://localhost:4000/api/instagram/story', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: storyUrl }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const data = await res.json();
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    return { ok: false, status: 503, data: { error: 'PROVIDERS_UNAVAILABLE', message: err.message } };
-  }
-}
-
 function validateInstagramUrl(url) {
   try {
-    if (url.startsWith('@')) return true;
+    if (url.startsWith('@') || /^[a-zA-Z0-9._]{1,30}$/.test(url)) return true;
     const parsed = new URL(url);
     return parsed.hostname.includes('instagram.com');
   } catch {
@@ -112,19 +95,19 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Invalid Instagram URL or handle' }, { status: 400 });
     }
 
-    const isStory = url.includes('/stories/') || url.startsWith('@');
+    const isStory = url.includes('/stories/') || url.startsWith('@') || !url.startsWith('http');
 
-    // ── CASE A: Instagram Story Link ──────────────────────────────────────────
+    // ── CASE A: Instagram Story Link or Username ──────────────────────────────
     if (isStory) {
-      const storyRes = await fetchStoryMedia(url);
-      if (storyRes.ok && storyRes.data?.stories?.length > 0) {
-        const stories = storyRes.data.stories;
+      const storyRes = await extractStoriesViaBrowser(url);
+
+      if (storyRes.success && storyRes.stories?.length > 0) {
         return NextResponse.json({
           success: true,
           type: 'story',
-          username: storyRes.data.username,
-          count: stories.length,
-          images: stories.map((s) => ({
+          username: storyRes.username,
+          count: storyRes.stories.length,
+          images: storyRes.stories.map((s) => ({
             url: s.url,
             thumbnail: s.thumbnail || s.url,
             type: s.type,
@@ -132,7 +115,14 @@ export async function POST(request) {
         });
       }
 
-      if (storyRes.data?.error === 'PRIVATE_ACCOUNT') {
+      if (storyRes.success && storyRes.stories?.length === 0) {
+        return NextResponse.json(
+          { error: 'No active stories found for this public account (stories expire in 24 hours).' },
+          { status: 404 }
+        );
+      }
+
+      if (storyRes.error === 'PRIVATE_ACCOUNT') {
         return NextResponse.json(
           { error: 'This account is private. Only public Stories can be downloaded.' },
           { status: 403 }
@@ -140,11 +130,8 @@ export async function POST(request) {
       }
 
       return NextResponse.json(
-        {
-          error:
-            'Unable to fetch Story. Instagram Stories require active authorization or the Story may have expired (24h limit).',
-        },
-        { status: 503 }
+        { error: 'Unable to extract public stories for this account at this time.' },
+        { status: 502 }
       );
     }
 
