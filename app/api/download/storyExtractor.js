@@ -5,7 +5,7 @@ const CHROME_PATH =
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 /**
- * Strategy 1: InDown Exact Story URL Extractor
+ * Strategy 1: InDown Exact Story URL Extractor (for https://www.instagram.com/stories/username/id)
  */
 async function extractViaInDown(page, exactStoryUrl) {
   try {
@@ -39,7 +39,6 @@ async function extractViaInDown(page, exactStoryUrl) {
       links.forEach((a) => {
         const href = a.href;
         if (href && href.startsWith('http')) {
-          // Normalize URL to base path to prevent duplicate server links
           const cleanUrl = href.replace(/[?&]dl=1/, '');
           if (!seen.has(cleanUrl) && !seen.has(href)) {
             seen.add(cleanUrl);
@@ -66,7 +65,6 @@ async function extractViaInDown(page, exactStoryUrl) {
       return stories;
     });
 
-    // If multiple duplicate links to the same video were extracted, keep the highest quality one
     if (result.length > 1 && result.every((s) => s.type === 'video')) {
       return [result[0]];
     }
@@ -79,11 +77,12 @@ async function extractViaInDown(page, exactStoryUrl) {
 }
 
 /**
- * Strategy 2: StoriesIG Profile/Story Extractor
+ * Strategy 2: StoriesIG Username Stories Extractor
+ * Strictly clicks and inspects the "STORIES" tab to avoid returning timeline posts or reels.
  */
 async function extractViaStoriesIG(page, username) {
   try {
-    console.log(`[Story] StoriesIG extracting for @${username}`);
+    console.log(`[Story] StoriesIG extracting stories for @${username}`);
     await page.goto('https://storiesig.info/en/', { waitUntil: 'networkidle2', timeout: 20000 });
 
     const inputSelector = 'input.search-form__input';
@@ -94,24 +93,74 @@ async function extractViaStoriesIG(page, username) {
     const btnSelector = 'button.search-form__button';
     await page.click(btnSelector);
 
+    // Wait for initial profile & tabs to render
     await new Promise((r) => setTimeout(r, 7000));
+
+    // Explicitly click the "STORIES" tab button
+    const switchedToStoriesTab = await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll('button.tabs-component__button, .tabs-component__button, button')];
+      const storyBtn = tabs.find((b) => b.innerText && b.innerText.trim().toUpperCase() === 'STORIES');
+      if (storyBtn) {
+        storyBtn.click();
+        return true;
+      }
+      return false;
+    });
+
+    console.log(`[Story] Switched to STORIES tab: ${switchedToStoriesTab}`);
+
+    // Wait for the stories tab content to load
+    await new Promise((r) => setTimeout(r, 4000));
 
     const extracted = await page.evaluate(() => {
       const stories = [];
       const seen = new Set();
-      const links = document.querySelectorAll('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"], a.btn-download');
-      
-      links.forEach((a) => {
-        const href = a.href || a.getAttribute('href');
-        if (href && href.startsWith('http') && !seen.has(href)) {
-          seen.add(href);
-          const isVid = href.includes('.mp4') || (a.innerText && a.innerText.toLowerCase().includes('video'));
+
+      // Find story items strictly within the story components/cards
+      const storyItems = document.querySelectorAll(
+        '.media-content--story, [data-type="story"], .stories-item, .story-item, .tabs-component__panel:not([style*="display: none"]) .media-content'
+      );
+
+      storyItems.forEach((item) => {
+        // Skip if inside posts container
+        if (item.classList.contains('media-content--post') || item.closest('.media-content--post')) {
+          return;
+        }
+
+        const dlLink = item.querySelector('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"], a[download]');
+        const video = item.querySelector('video, video source');
+        const img = item.querySelector('img');
+
+        const url = dlLink?.href || video?.src || img?.src;
+        if (url && (url.startsWith('http') || url.startsWith('blob:')) && !seen.has(url)) {
+          seen.add(url);
+          const isVid = url.includes('.mp4') || (dlLink?.innerText && dlLink.innerText.toLowerCase().includes('video'));
           stories.push({
             type: isVid ? 'video' : 'image',
-            url: href,
+            url,
+            thumbnail: img?.src || undefined,
           });
         }
       });
+
+      // If items weren't tagged with story class, check for active panel links
+      if (stories.length === 0) {
+        const activePanel = document.querySelector('.tabs-component__panel:not([style*="display: none"])');
+        if (activePanel) {
+          const links = activePanel.querySelectorAll('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"]');
+          links.forEach((a) => {
+            const href = a.href;
+            if (href && href.startsWith('http') && !seen.has(href)) {
+              seen.add(href);
+              const isVid = href.includes('.mp4') || (a.innerText && a.innerText.toLowerCase().includes('video'));
+              stories.push({
+                type: isVid ? 'video' : 'image',
+                url: href,
+              });
+            }
+          });
+        }
+      }
 
       return stories;
     });
@@ -174,7 +223,7 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
       }
     }
 
-    // ── 2. Fallback to StoriesIG ─────────────────────────────────────────────
+    // ── 2. For username queries or fallback, use StoriesIG Stories Tab ───────
     const storiesIgList = await extractViaStoriesIG(page, username);
     if (storiesIgList.length > 0) {
       return {
