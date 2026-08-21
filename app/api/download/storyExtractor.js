@@ -4,6 +4,25 @@ const CHROME_PATH =
   process.env.CHROME_PATH ||
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
+function unwrapDirectCdnUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  try {
+    if (url.includes('storiesig.info/get') || url.includes('anonyig.com/get')) {
+      const parsed = new URL(url);
+      const inner = parsed.searchParams.get('uri');
+      if (inner && inner.startsWith('http')) return inner;
+    }
+    if (url.includes('indown.io/fetch')) {
+      const parsed = new URL(url);
+      const inner = parsed.searchParams.get('url');
+      if (inner && inner.startsWith('http')) return inner;
+    }
+  } catch {
+    // fallback to original
+  }
+  return url;
+}
+
 /**
  * Strategy 1: InDown Exact Story URL Extractor (for https://www.instagram.com/stories/username/id)
  */
@@ -65,11 +84,16 @@ async function extractViaInDown(page, exactStoryUrl) {
       return stories;
     });
 
-    if (result.length > 1 && result.every((s) => s.type === 'video')) {
-      return [result[0]];
+    const unwrapped = result.map((s) => ({
+      ...s,
+      url: unwrapDirectCdnUrl(s.url),
+    }));
+
+    if (unwrapped.length > 1 && unwrapped.every((s) => s.type === 'video')) {
+      return [unwrapped[0]];
     }
 
-    return result;
+    return unwrapped;
   } catch (err) {
     console.warn('[Story InDown Strategy Error]:', err.message);
     return [];
@@ -78,7 +102,6 @@ async function extractViaInDown(page, exactStoryUrl) {
 
 /**
  * Strategy 2: StoriesIG Username Multi-Stories Extractor
- * Switches to the STORIES tab and extracts ALL active public story cards.
  */
 async function extractViaStoriesIG(page, username) {
   try {
@@ -103,60 +126,68 @@ async function extractViaStoriesIG(page, username) {
       if (storyBtn) storyBtn.click();
     });
 
-    // Wait for the stories tab content to load
-    await new Promise((r) => setTimeout(r, 4500));
+    await new Promise((r) => setTimeout(r, 3500));
+
+    // Click story card buttons to trigger video stream / download link generation
+    await page.evaluate(() => {
+      const storyBtns = document.querySelectorAll('.media-content--story button, .media-content--story, [data-type="story"]');
+      storyBtns.forEach((b) => b.click());
+    });
+
+    await new Promise((r) => setTimeout(r, 3000));
 
     const extracted = await page.evaluate(() => {
       const stories = [];
       const seen = new Set();
 
-      // Find all story item containers strictly inside the stories tab
-      const storyCards = document.querySelectorAll(
-        '.media-content--story, [data-type="story"], .stories-item, .story-item, .tabs-component__panel:not([style*="display: none"]) .media-content'
+      // Check all download links in the active stories panel
+      const downloadLinks = document.querySelectorAll(
+        '.tabs-component__panel:not([style*="display: none"]) a[href*="storiesig.info/get"], a[href*=".mp4"], .media-content--story a'
       );
 
-      storyCards.forEach((card) => {
-        // Skip if belonging to posts section
-        if (card.classList.contains('media-content--post') || card.closest('.media-content--post')) {
-          return;
-        }
-
-        const dlLink = card.querySelector('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"], a.btn-download');
-        const video = card.querySelector('video, video source');
-        const img = card.querySelector('img');
-
-        const videoUrl = video?.src || (dlLink && dlLink.href.includes('.mp4') ? dlLink.href : null);
-        const imageUrl = dlLink?.href || img?.src;
-
-        if (videoUrl && !seen.has(videoUrl)) {
-          seen.add(videoUrl);
+      downloadLinks.forEach((a) => {
+        const href = a.href || a.getAttribute('href');
+        if (href && href.startsWith('http') && !seen.has(href)) {
+          seen.add(href);
+          const isVid = href.includes('.mp4') || href.includes('filename=AQ') || (a.innerText && a.innerText.toLowerCase().includes('video'));
           stories.push({
-            type: 'video',
-            url: videoUrl,
-            thumbnail: img?.src || undefined,
-          });
-        } else if (imageUrl && !seen.has(imageUrl)) {
-          seen.add(imageUrl);
-          stories.push({
-            type: 'image',
-            url: imageUrl,
-            thumbnail: imageUrl,
+            type: isVid ? 'video' : 'image',
+            url: href,
           });
         }
       });
 
-      // Scan for any additional story download anchors in the active panel
-      const activePanel = document.querySelector('.tabs-component__panel:not([style*="display: none"])');
-      if (activePanel) {
-        const links = activePanel.querySelectorAll('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"]');
-        links.forEach((a) => {
-          const href = a.href;
-          if (href && href.startsWith('http') && !seen.has(href)) {
-            seen.add(href);
-            const isVid = href.includes('.mp4') || (a.innerText && a.innerText.toLowerCase().includes('video'));
+      // If links were not present, fallback to story cards & images
+      if (stories.length === 0) {
+        const storyCards = document.querySelectorAll(
+          '.media-content--story, [data-type="story"], .stories-item, .tabs-component__panel:not([style*="display: none"]) .media-content'
+        );
+
+        storyCards.forEach((card) => {
+          if (card.classList.contains('media-content--post') || card.closest('.media-content--post')) {
+            return;
+          }
+
+          const dlLink = card.querySelector('a[href*="storiesig.info/get"], a[href*="fbcdn"], a[href*="cdninstagram"], a.btn-download');
+          const video = card.querySelector('video, video source');
+          const img = card.querySelector('img');
+
+          const videoUrl = video?.src || (dlLink && dlLink.href.includes('.mp4') ? dlLink.href : null);
+          const imageUrl = dlLink?.href || img?.src;
+
+          if (videoUrl && !seen.has(videoUrl)) {
+            seen.add(videoUrl);
             stories.push({
-              type: isVid ? 'video' : 'image',
-              url: href,
+              type: 'video',
+              url: videoUrl,
+              thumbnail: img?.src || undefined,
+            });
+          } else if (imageUrl && !seen.has(imageUrl)) {
+            seen.add(imageUrl);
+            stories.push({
+              type: 'image',
+              url: imageUrl,
+              thumbnail: imageUrl,
             });
           }
         });
@@ -165,7 +196,13 @@ async function extractViaStoriesIG(page, username) {
       return stories;
     });
 
-    return extracted;
+    const unwrapped = extracted.map((s) => ({
+      ...s,
+      url: unwrapDirectCdnUrl(s.url),
+      thumbnail: unwrapDirectCdnUrl(s.thumbnail),
+    }));
+
+    return unwrapped;
   } catch (err) {
     console.warn('[Story StoriesIG Strategy Error]:', err.message);
     return [];
@@ -250,4 +287,5 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
 
 module.exports = {
   extractStoriesViaBrowser,
+  unwrapDirectCdnUrl,
 };
