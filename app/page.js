@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 
 const TABS = [
+  { id: 'auto', label: '⚡ Auto-Detect', placeholder: 'Paste any Instagram link or @username...' },
   { id: 'reel', label: 'Reel', placeholder: 'Paste Instagram Reel link...' },
   { id: 'video', label: 'Video', placeholder: 'Paste Instagram Video link...' },
   { id: 'post', label: 'Post', placeholder: 'Paste Instagram Post or Carousel link...' },
@@ -38,7 +39,7 @@ const FAQS = [
 
 export default function Home() {
   const [url, setUrl] = useState('');
-  const [activeTab, setActiveTab] = useState('reel');
+  const [activeTab, setActiveTab] = useState('auto');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [media, setMedia] = useState(null);
