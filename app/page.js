@@ -68,11 +68,13 @@ export default function Home() {
   const downloadAll = async (items) => {
     if (!items || items.length === 0) return;
     setDlAll(true);
+    const isStory = media?.type === 'story';
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const link = document.createElement('a');
       link.href = downloadUrl(item.url || item);
-      link.download = `instagram_story_${i + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`;
+      const ext = item.type === 'video' ? 'mp4' : 'jpg';
+      link.download = isStory ? `instagram_story_${i + 1}.${ext}` : `instagram_image_${i + 1}.${ext}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -84,6 +86,16 @@ export default function Home() {
   const isMultiItem = media && (media.type === 'carousel' || (media.images && media.images.length > 1));
   const isSingleStoryVideo = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'video';
   const isSingleStoryImage = media && media.type === 'story' && media.images?.length === 1 && media.images[0].type === 'image';
+
+  const getItemButtonLabel = (item, idx) => {
+    if (media?.type === 'story') {
+      return `Story ${idx + 1}`;
+    }
+    if (item.type === 'video') {
+      return `Video ${idx + 1}`;
+    }
+    return `Image ${idx + 1}`;
+  };
 
   return (
     <>
@@ -166,7 +178,7 @@ export default function Home() {
             {(media.type === 'video' || isSingleStoryVideo) && !isMultiItem && (
               <>
                 <div className="media-badge">
-                  {media.type === 'story' ? '📖 Instagram Story Video Ready' : '🎬 HD Video Ready'}
+                  {media.type === 'story' ? '📖 Instagram Story Ready' : '🎬 HD Video Ready'}
                 </div>
                 <div className="video-wrap">
                   <video
@@ -184,9 +196,9 @@ export default function Home() {
                   href={downloadUrl(media.videoUrl || media.images?.[0]?.url)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
-                  download={`instagram_story_${Date.now()}.mp4`}
+                  download={media.type === 'story' ? `instagram_story_${Date.now()}.mp4` : `instagram_video_${Date.now()}.mp4`}
                 >
-                  <DownloadIcon /> Download Story Video (MP4)
+                  <DownloadIcon /> {media.type === 'story' ? 'Download Story (MP4)' : 'Download Video (MP4)'}
                 </a>
               </>
             )}
@@ -195,12 +207,12 @@ export default function Home() {
             {(media.type === 'image' || isSingleStoryImage) && !isMultiItem && (
               <>
                 <div className="media-badge">
-                  {media.type === 'story' ? '📖 Instagram Story Photo Ready' : '🖼️ HD Photo Ready'}
+                  {media.type === 'story' ? '📖 Instagram Story Ready' : '🖼️ HD Image Ready'}
                 </div>
                 <div className="single-img-wrap">
                   <img
                     src={previewUrl(media.imageUrl || media.images?.[0]?.url)}
-                    alt="Instagram story"
+                    alt="Instagram media"
                     className="media-element"
                     referrerPolicy="no-referrer"
                     crossOrigin="anonymous"
@@ -213,9 +225,9 @@ export default function Home() {
                   href={downloadUrl(media.imageUrl || media.images?.[0]?.url)}
                   className="btn btn-success btn-download-main"
                   id="download-btn"
-                  download={`instagram_story_${Date.now()}.jpg`}
+                  download={media.type === 'story' ? `instagram_story_${Date.now()}.jpg` : `instagram_image_${Date.now()}.jpg`}
                 >
-                  <DownloadIcon /> Download Story Photo (HD)
+                  <DownloadIcon /> {media.type === 'story' ? 'Download Story (HD)' : 'Download Image (HD)'}
                 </a>
               </>
             )}
@@ -225,7 +237,7 @@ export default function Home() {
               <>
                 <div className="carousel-header">
                   <div className="media-badge">
-                    {media.type === 'story' ? `📖 ${media.count} Active Stories` : `🗂️ ${media.count} Photos Found`}
+                    {media.type === 'story' ? `📖 ${media.count} Active Stories` : `🗂️ ${media.count} Images Found`}
                   </div>
                   <button
                     type="button"
@@ -278,11 +290,11 @@ export default function Home() {
                       </div>
                       <a
                         href={downloadUrl(item.url)}
-                        download={`instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
+                        download={media.type === 'story' ? `instagram_story_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}` : `instagram_image_${idx + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`}
                         className="btn btn-item-dl"
                         id={`download-img-${idx}`}
                       >
-                        <DownloadIcon /> {item.type === 'video' ? 'Video Story' : 'Photo Story'} {idx + 1}
+                        <DownloadIcon /> {getItemButtonLabel(item, idx)}
                       </a>
                     </div>
                   ))}
