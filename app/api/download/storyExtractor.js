@@ -1,10 +1,90 @@
-const puppeteer = require('puppeteer-core');
+import puppeteer from 'puppeteer-core';
+import fs from 'fs';
 
-const CHROME_PATH =
-  process.env.CHROME_PATH ||
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+/**
+ * Resolves the appropriate Chromium executable path and launch args
+ * based on whether running in Vercel/Linux serverless or local Windows/macOS.
+ */
+export async function getChromiumConfig() {
+  const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-function unwrapDirectCdnUrl(url) {
+  if (isVercel) {
+    try {
+      const chromiumMod = await import('@sparticuz/chromium');
+      const chromium = chromiumMod.default || chromiumMod;
+      const executablePath = await chromium.executablePath();
+      return {
+        executablePath,
+        args: chromium.args || [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--single-process',
+        ],
+        headless: true,
+      };
+    } catch (err) {
+      console.warn('[StoryExtractor] @sparticuz/chromium resolution warning:', err.message);
+    }
+  }
+
+  // Local environment detection (Windows / macOS / Linux)
+  const localCandidates = [
+    process.env.CHROME_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+    process.env.PROGRAMFILES ? `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe` : null,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean);
+
+  let localPath = null;
+  for (const candidate of localCandidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        localPath = candidate;
+        break;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (localPath) {
+    return {
+      executablePath: localPath,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled',
+        '--window-size=1366,768',
+      ],
+      headless: 'new',
+    };
+  }
+
+  // Fallback to @sparticuz/chromium if local Chrome not found
+  try {
+    const chromiumMod = await import('@sparticuz/chromium');
+    const chromium = chromiumMod.default || chromiumMod;
+    const executablePath = await chromium.executablePath();
+    return {
+      executablePath,
+      args: chromium.args || ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      headless: true,
+    };
+  } catch (err) {
+    throw new Error(`Chromium executable could not be located in current environment: ${err.message}`);
+  }
+}
+
+export function unwrapDirectCdnUrl(url) {
   if (!url || typeof url !== 'string') return url;
   try {
     if (
@@ -28,7 +108,7 @@ function unwrapDirectCdnUrl(url) {
   return url;
 }
 
-function isInstagramCdn(url) {
+export function isInstagramCdn(url) {
   if (!url) return false;
   return url.includes('cdninstagram.com') || url.includes('fbcdn.net');
 }
@@ -39,7 +119,7 @@ function isInstagramCdn(url) {
  */
 async function extractViaStorySaver(page, username) {
   try {
-    console.log(`[Provider: StorySaver.net (Primary)] Querying @${username}...`);
+    console.log(`[StoryExtractor] Trying provider: StorySaver (Primary) for @${username}`);
     await page.goto('https://www.storysaver.net/en/', { waitUntil: 'networkidle2', timeout: 20000 });
 
     const input = await page.$('#text_url, input[name="url"], input[type="text"]');
@@ -56,10 +136,7 @@ async function extractViaStorySaver(page, username) {
       const hasResults = await page.evaluate(() => {
         return document.querySelectorAll('video, a[download], a.download_button, a[href*="cdninstagram"]').length;
       });
-      if (hasResults > 0) {
-        console.log(`[StorySaver.net] Found items after ${sec + 1}s!`);
-        break;
-      }
+      if (hasResults > 0) break;
     }
 
     const items = await page.evaluate(() => {
@@ -85,10 +162,10 @@ async function extractViaStorySaver(page, username) {
       }
     }
 
-    console.log(`[StorySaver.net] Extracted ${stories.length} stories.`);
+    console.log(`[StoryExtractor] Provider StorySaver returned ${stories.length} items`);
     return stories;
   } catch (err) {
-    console.warn('[StorySaver.net Error]:', err.message);
+    console.warn('[StoryExtractor] StorySaver error:', err.message);
     return [];
   }
 }
@@ -99,7 +176,7 @@ async function extractViaStorySaver(page, username) {
  */
 async function extractViaIGram(page, username) {
   try {
-    console.log(`[Provider: IGram.world (Fallback 1)] Querying @${username}...`);
+    console.log(`[StoryExtractor] Trying fallback: IGram.world for @${username}`);
     await page.goto('https://igram.world/en1/story-saver', { waitUntil: 'networkidle2', timeout: 20000 });
 
     const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
@@ -116,10 +193,7 @@ async function extractViaIGram(page, username) {
       const count = await page.evaluate(() => {
         return document.querySelectorAll('a[href*="igram.world/get"], a.button__download, a[download]').length;
       });
-      if (count > 0) {
-        console.log(`[IGram.world] Found ${count} story download links after ${sec + 1}s!`);
-        break;
-      }
+      if (count > 0) break;
     }
 
     const items = await page.evaluate(() => {
@@ -144,10 +218,10 @@ async function extractViaIGram(page, username) {
       }
     }
 
-    console.log(`[IGram.world] Extracted ${stories.length} stories.`);
+    console.log(`[StoryExtractor] Provider IGram.world returned ${stories.length} items`);
     return stories;
   } catch (err) {
-    console.warn('[IGram.world Error]:', err.message);
+    console.warn('[StoryExtractor] IGram.world error:', err.message);
     return [];
   }
 }
@@ -158,7 +232,7 @@ async function extractViaIGram(page, username) {
  */
 async function extractViaInstaSaver(page, username) {
   try {
-    console.log(`[Provider: InstaSaver.io (Fallback 2)] Querying @${username}...`);
+    console.log(`[StoryExtractor] Trying fallback: InstaSaver.io for @${username}`);
     const interceptedVideoUrls = [];
     const responseHandler = async (res) => {
       const u = res.url();
@@ -194,10 +268,7 @@ async function extractViaInstaSaver(page, username) {
     for (let sec = 0; sec < 12; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
       btnCount = await page.evaluate(() => document.querySelectorAll('.grid button').length);
-      if (btnCount > 0) {
-        console.log(`[InstaSaver.io] Found ${btnCount} active story buttons after ${sec + 1}s!`);
-        break;
-      }
+      if (btnCount > 0) break;
     }
 
     if (btnCount > 0) {
@@ -250,10 +321,10 @@ async function extractViaInstaSaver(page, username) {
       }
     }
 
-    console.log(`[InstaSaver.io] Extracted ${stories.length} stories.`);
+    console.log(`[StoryExtractor] Provider InstaSaver.io returned ${stories.length} items`);
     return stories;
   } catch (err) {
-    console.warn('[InstaSaver.io Error]:', err.message);
+    console.warn('[StoryExtractor] InstaSaver.io error:', err.message);
     return [];
   }
 }
@@ -264,7 +335,7 @@ async function extractViaInstaSaver(page, username) {
  */
 async function extractViaInDown(page, username) {
   try {
-    console.log(`[Provider: InDown.io (Fallback 3)] Querying @${username}...`);
+    console.log(`[StoryExtractor] Trying fallback: InDown.io for @${username}`);
     const storyUrl = `https://www.instagram.com/stories/${username}/`;
     await page.goto('https://indown.io/insta-stories-download', { waitUntil: 'networkidle2', timeout: 20000 });
 
@@ -278,10 +349,7 @@ async function extractViaInDown(page, username) {
       const count = await page.evaluate(() => {
         return document.querySelectorAll('video, a[download], a.btn-primary[href*="cdn"], a.btn-primary[href*="fetch"]').length;
       });
-      if (count > 0) {
-        console.log(`[InDown.io] Found ${count} items after ${sec + 1}s!`);
-        break;
-      }
+      if (count > 0) break;
     }
 
     const items = await page.evaluate(() => {
@@ -307,10 +375,10 @@ async function extractViaInDown(page, username) {
       }
     }
 
-    console.log(`[InDown.io] Extracted ${stories.length} stories.`);
+    console.log(`[StoryExtractor] Provider InDown.io returned ${stories.length} items`);
     return stories;
   } catch (err) {
-    console.warn('[InDown.io Error]:', err.message);
+    console.warn('[StoryExtractor] InDown.io error:', err.message);
     return [];
   }
 }
@@ -318,7 +386,11 @@ async function extractViaInDown(page, username) {
 /**
  * Main Story Extraction Dispatcher with Resilient Multi-Provider Fallback Cascade
  */
-async function extractStoriesViaBrowser(usernameOrUrl) {
+export async function extractStoriesViaBrowser(usernameOrUrl) {
+  const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  console.log(`[StoryExtractor] Starting extraction for: ${usernameOrUrl}`);
+  console.log(`[StoryExtractor] Environment: ${isVercel ? 'vercel/serverless' : 'local'}`);
+
   let cleanInput = usernameOrUrl.trim();
   let username = 'user';
   let targetStoryId = null;
@@ -340,16 +412,11 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
 
   let browser;
   try {
+    const config = await getChromiumConfig();
     browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=1366,768',
-      ],
+      executablePath: config.executablePath,
+      headless: config.headless,
+      args: config.args,
     });
 
     const page = await browser.newPage();
@@ -369,23 +436,20 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
 
     // 2. Fallback 1: IGram.world
     if (storiesList.length === 0) {
-      console.log(`[Cascade] Failing over to Fallback 1 (IGram.world) for @${username}...`);
       storiesList = await extractViaIGram(page, username);
     }
 
     // 3. Fallback 2: InstaSaver.io
     if (storiesList.length === 0) {
-      console.log(`[Cascade] Failing over to Fallback 2 (InstaSaver.io) for @${username}...`);
       storiesList = await extractViaInstaSaver(page, username);
     }
 
     // 4. Fallback 3: InDown.io
     if (storiesList.length === 0) {
-      console.log(`[Cascade] Failing over to Fallback 3 (InDown.io) for @${username}...`);
       storiesList = await extractViaInDown(page, username);
     }
 
-    // If targetStoryId was specified in the link, prioritize it to the front
+    // Prioritize targetStoryId if requested in the original link
     if (targetStoryId && storiesList.length > 1) {
       const matchIdx = storiesList.findIndex(
         (s) => (s.url && s.url.includes(targetStoryId)) || (s.thumbnail && s.thumbnail.includes(targetStoryId))
@@ -396,6 +460,8 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
       }
     }
 
+    console.log(`[StoryExtractor] Final story count: ${storiesList.length} for @${username}`);
+
     return {
       success: true,
       username,
@@ -403,14 +469,15 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
       stories: storiesList,
     };
   } catch (err) {
-    console.error('[Story Cascade Error]:', err.message);
+    console.error('[StoryExtractor] Cascade Error:', err.message);
     return { success: false, error: 'FETCH_FAILED', message: err.message };
   } finally {
-    if (browser) await browser.close();
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeErr) {
+        console.warn('[StoryExtractor] Browser close warning:', closeErr.message);
+      }
+    }
   }
 }
-
-module.exports = {
-  extractStoriesViaBrowser,
-  unwrapDirectCdnUrl,
-};

@@ -12,7 +12,12 @@ export async function GET(request) {
 
     // Auto-unwrap nested CDN URLs from wrapper services if present
     try {
-      if (targetUrl.includes('storiesig.info/get') || targetUrl.includes('anonyig.com/get')) {
+      if (
+        targetUrl.includes('igram.world/get') ||
+        targetUrl.includes('storiesig.info/get') ||
+        targetUrl.includes('anonyig.com/get') ||
+        targetUrl.includes('instasaver.io/api/media/proxy')
+      ) {
         const parsed = new URL(targetUrl);
         const innerUri = parsed.searchParams.get('uri');
         if (innerUri && innerUri.startsWith('http')) {

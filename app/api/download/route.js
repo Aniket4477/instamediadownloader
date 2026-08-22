@@ -1,63 +1,243 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'child_process';
-import { extractStoriesViaBrowser } from './storyExtractor';
-
-const YTDLP_BIN =
-  process.env.YTDLP_PATH ||
-  'C:\\Users\\anike\\AppData\\Roaming\\Python\\Python314\\Scripts\\yt-dlp.exe';
+import puppeteer from 'puppeteer-core';
+import { extractStoriesViaBrowser, unwrapDirectCdnUrl, getChromiumConfig } from './storyExtractor';
 
 /**
- * Executes self-hosted yt-dlp to extract video metadata
+ * Cross-platform yt-dlp binary resolver (uses YTDLP_PATH env or system PATH 'yt-dlp')
+ */
+const YTDLP_BIN = process.env.YTDLP_PATH || 'yt-dlp';
+
+/**
+ * Executes yt-dlp if available on system, returning JSON metadata safely
  */
 function runYtdlp(url, args = []) {
   return new Promise((resolve) => {
-    const proc = spawn(
-      YTDLP_BIN,
-      ['--ignore-errors', '--no-playlist', '--quiet', '--no-warnings', ...args, url],
-      { shell: false }
-    );
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('error', () => resolve({ info: null, stderr }));
-    proc.on('close', () => {
-      let info = null;
-      if (stdout.trim()) {
-        try { info = JSON.parse(stdout.trim()); } catch { /* ignore */ }
-      }
-      resolve({ info, stderr });
-    });
+    try {
+      const proc = spawn(
+        /*turbopackIgnore: true*/ YTDLP_BIN,
+        ['--ignore-errors', '--no-playlist', '--quiet', '--no-warnings', ...args, url],
+        { shell: false }
+      );
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('error', (err) => {
+        resolve({ info: null, stderr: err.message || 'yt-dlp not found' });
+      });
+      proc.on('close', () => {
+        let info = null;
+        if (stdout.trim()) {
+          try { info = JSON.parse(stdout.trim()); } catch { /* ignore */ }
+        }
+        resolve({ info, stderr });
+      });
+    } catch (err) {
+      resolve({ info: null, stderr: err.message });
+    }
   });
 }
 
+/**
+ * Executes yt-dlp for flat-playlist carousel extraction
+ */
 function runYtdlpCarousel(url) {
   return new Promise((resolve) => {
-    const proc = spawn(
-      YTDLP_BIN,
-      ['--ignore-errors', '--flat-playlist', '--quiet', url],
-      { shell: false }
-    );
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('error', () => resolve({ info: null, stderr }));
-    proc.on('close', () => {
-      let info = null;
-      if (stdout.trim()) {
-        try { info = JSON.parse(stdout.trim()); } catch { /* ignore */ }
-      }
-      resolve({ info, stderr });
-    });
+    try {
+      const proc = spawn(
+        /*turbopackIgnore: true*/ YTDLP_BIN,
+        ['--ignore-errors', '--flat-playlist', '--dump-single-json', '--quiet', url],
+        { shell: false }
+      );
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('error', (err) => {
+        resolve({ info: null, stderr: err.message || 'yt-dlp not found' });
+      });
+      proc.on('close', () => {
+        let info = null;
+        if (stdout.trim()) {
+          try { info = JSON.parse(stdout.trim()); } catch { /* ignore */ }
+        }
+        resolve({ info, stderr });
+      });
+    } catch (err) {
+      resolve({ info: null, stderr: err.message });
+    }
   });
 }
 
-function parseShortcodesFromStderr(stderr) {
-  const matches = [...stderr.matchAll(/\[Instagram\]\s+([A-Za-z0-9_-]+):/g)];
-  return [...new Set(matches.map((m) => m[1]))];
+function isInstagramCdn(url) {
+  if (!url) return false;
+  return url.includes('cdninstagram.com') || url.includes('fbcdn.net');
 }
 
+/**
+ * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
+ * Extracts ALL available items in a carousel post preserving image and video streams.
+ */
+async function extractPostViaBrowser(postUrl) {
+  let browser;
+  try {
+    const config = await getChromiumConfig();
+    browser = await puppeteer.launch({
+      executablePath: config.executablePath,
+      headless: config.headless,
+      args: config.args,
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    );
+
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = { runtime: {} };
+    });
+
+    // 1. Try Provider A: IGram.world for posts & carousels
+    try {
+      console.log(`[PostExtractor] Querying IGram for: ${postUrl}`);
+      await page.goto('https://igram.world/', { waitUntil: 'networkidle2', timeout: 20000 });
+
+      const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
+      if (input) {
+        await input.type(postUrl, { delay: 20 });
+        await page.evaluate(() => {
+          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
+          if (btn) btn.click();
+        });
+
+        for (let sec = 0; sec < 12; sec++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const count = await page.evaluate(() => {
+            return document.querySelectorAll('a.button__download, a[href*="igram.world/get"], a[download]').length;
+          });
+          if (count > 0) break;
+        }
+
+        const items = await page.evaluate(() => {
+          const list = [];
+          document.querySelectorAll('a.button__download, a[href*="igram.world/get"], a[download]').forEach((a) => {
+            if (a.href) {
+              const text = (a.innerText || '').toLowerCase();
+              const isVideo = text.includes('video') || text.includes('.mp4') || a.href.includes('.mp4');
+              list.push({
+                url: a.href,
+                type: isVideo ? 'video' : 'image',
+              });
+            }
+          });
+          return list;
+        });
+
+        if (items.length > 0) {
+          const media = [];
+          const seen = new Set();
+          for (const item of items) {
+            const cleanUrl = unwrapDirectCdnUrl(item.url);
+            if (isInstagramCdn(cleanUrl) && !seen.has(cleanUrl)) {
+              seen.add(cleanUrl);
+              media.push({
+                type: item.type,
+                url: cleanUrl,
+                thumbnail: cleanUrl,
+              });
+            }
+          }
+
+          if (media.length > 0) {
+            console.log(`[PostExtractor] IGram extracted ${media.length} items for post`);
+            return media;
+          }
+        }
+      }
+    } catch (igramErr) {
+      console.warn('[PostExtractor] IGram post extraction warning:', igramErr.message);
+    }
+
+    // 2. Try Provider B: FastDL / InDown for posts & carousels
+    try {
+      console.log(`[PostExtractor] Trying fallback FastDL for: ${postUrl}`);
+      await page.goto('https://fastdl.app/en', { waitUntil: 'networkidle2', timeout: 20000 });
+
+      const input2 = await page.$('#search-form-input, input[name="url"], input[type="text"]');
+      if (input2) {
+        await input2.type(postUrl, { delay: 20 });
+        await page.evaluate(() => {
+          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
+          if (btn) btn.click();
+        });
+
+        for (let sec = 0; sec < 10; sec++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const count = await page.evaluate(() => {
+            return document.querySelectorAll('a.button__download, a[download]').length;
+          });
+          if (count > 0) break;
+        }
+
+        const items2 = await page.evaluate(() => {
+          const list = [];
+          document.querySelectorAll('a.button__download, a[download]').forEach((a) => {
+            if (a.href) {
+              const text = (a.innerText || '').toLowerCase();
+              const isVideo = text.includes('video') || text.includes('.mp4') || a.href.includes('.mp4');
+              list.push({
+                url: a.href,
+                type: isVideo ? 'video' : 'image',
+              });
+            }
+          });
+          return list;
+        });
+
+        if (items2.length > 0) {
+          const media2 = [];
+          const seen2 = new Set();
+          for (const item of items2) {
+            const cleanUrl = unwrapDirectCdnUrl(item.url);
+            if (isInstagramCdn(cleanUrl) && !seen2.has(cleanUrl)) {
+              seen2.add(cleanUrl);
+              media2.push({
+                type: item.type,
+                url: cleanUrl,
+                thumbnail: cleanUrl,
+              });
+            }
+          }
+          if (media2.length > 0) {
+            console.log(`[PostExtractor] FastDL extracted ${media2.length} items for post`);
+            return media2;
+          }
+        }
+      }
+    } catch (fastdlErr) {
+      console.warn('[PostExtractor] FastDL post extraction warning:', fastdlErr.message);
+    }
+
+    return [];
+  } catch (err) {
+    console.error('[PostExtractor] Browser Extraction Error:', err.message);
+    return [];
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeErr) {
+        console.warn('[PostExtractor] Browser close warning:', closeErr.message);
+      }
+    }
+  }
+}
+
+/**
+ * Public Instagram oEmbed Fetcher
+ */
 async function oembedFetch(shortcodeOrUrl) {
   const postUrl = shortcodeOrUrl.startsWith('http')
     ? shortcodeOrUrl
@@ -154,25 +334,56 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE B: Reels / Video Posts via yt-dlp ────────────────────────────────
+    // ── CASE B: Reels / Single Videos via yt-dlp (if available) ──────────────
     const { info, stderr } = await runYtdlp(url, ['--dump-single-json']);
 
-    if (info?.url) {
-      return NextResponse.json({
-        success: true,
-        type: 'video',
-        videoUrl: info.url,
-        imageUrl: info.thumbnail || null,
-        thumbnail: info.thumbnail || null,
-        title: info.title || 'Instagram Video',
-        author: info.uploader || info.channel || info.uploader_id || '',
-        duration: info.duration || null,
-        images: null,
-        count: 1,
-      });
+    if (info) {
+      // Check if yt-dlp returned multi-entry carousel
+      if (Array.isArray(info.entries) && info.entries.length > 0) {
+        const validEntries = info.entries.filter((e) => e && (e.url || e.thumbnail));
+        if (validEntries.length > 0) {
+          const carouselImages = validEntries.map((e) => {
+            const isVideo = e.vcodec !== 'none' || e.ext === 'mp4';
+            const mediaUrl = e.url || e.thumbnail;
+            return {
+              url: mediaUrl,
+              thumbnail: e.thumbnail || mediaUrl,
+              type: isVideo ? 'video' : 'image',
+            };
+          });
+
+          return NextResponse.json({
+            success: true,
+            type: carouselImages.length === 1 ? carouselImages[0].type : 'carousel',
+            videoUrl: carouselImages[0].type === 'video' ? carouselImages[0].url : null,
+            imageUrl: carouselImages[0].thumbnail,
+            thumbnail: carouselImages[0].thumbnail,
+            title: info.title || 'Instagram Post',
+            author: info.uploader || info.channel || info.uploader_id || '',
+            images: carouselImages,
+            count: carouselImages.length,
+          });
+        }
+      }
+
+      // Single video / Reel
+      if (info.url) {
+        return NextResponse.json({
+          success: true,
+          type: 'video',
+          videoUrl: info.url,
+          imageUrl: info.thumbnail || null,
+          thumbnail: info.thumbnail || null,
+          title: info.title || 'Instagram Video',
+          author: info.uploader || info.channel || info.uploader_id || '',
+          duration: info.duration || null,
+          images: [{ url: info.url, thumbnail: info.thumbnail || info.url, type: 'video' }],
+          count: 1,
+        });
+      }
     }
 
-    const stderrLow = stderr.toLowerCase();
+    const stderrLow = (stderr || '').toLowerCase();
     if (stderrLow.includes('login required') || stderrLow.includes('private video')) {
       return NextResponse.json(
         { error: 'This post is private or requires login. Only public content can be downloaded.' },
@@ -180,77 +391,58 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE C: Multi-Photo Carousel or Single Photo ──────────────────────────
-    const { stderr: stderr2 } = await runYtdlpCarousel(url);
-    const allStderr = stderr + '\n' + stderr2;
-    const shortcodes = parseShortcodesFromStderr(allStderr);
+    // ── CASE C: Multi-Item Carousel or Post via Serverless Browser Extractor ──
+    const browserMedia = await extractPostViaBrowser(url);
+    if (browserMedia.length > 0) {
+      const isSingle = browserMedia.length === 1;
+      const firstItem = browserMedia[0];
 
-    if (shortcodes.length === 0) {
-      try {
-        const oembed = await oembedFetch(url);
-        if (oembed.thumbnail_url) {
-          return NextResponse.json({
-            success: true,
-            type: 'image',
-            videoUrl: null,
-            imageUrl: oembed.thumbnail_url,
-            thumbnail: oembed.thumbnail_url,
-            title: oembed.title || 'Instagram Photo',
-            author: oembed.author_name || '',
-            images: [{ url: oembed.thumbnail_url, thumbnail: oembed.thumbnail_url }],
-            count: 1,
-          });
-        }
-      } catch (err) {
-        console.error('[oEmbed Single Post Error]:', err.message);
-      }
-
-      return NextResponse.json(
-        { error: 'Could not extract media. Please verify the link is public.' },
-        { status: 404 }
-      );
+      return NextResponse.json({
+        success: true,
+        type: isSingle ? firstItem.type : 'carousel',
+        videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
+        imageUrl: firstItem.thumbnail || firstItem.url,
+        thumbnail: firstItem.thumbnail || firstItem.url,
+        title: 'Instagram Post',
+        author: '',
+        images: browserMedia.map((m) => ({
+          url: m.url,
+          thumbnail: m.thumbnail || m.url,
+          type: m.type,
+        })),
+        count: browserMedia.length,
+      });
     }
 
-    // Multi-Photo Carousel
-    const results = await Promise.allSettled(
-      shortcodes.map((sc) => oembedFetch(sc))
+    // ── CASE D: Single Photo / Post Fallback via Instagram oEmbed ─────────────
+    try {
+      const oembed = await oembedFetch(url);
+      if (oembed.thumbnail_url) {
+        return NextResponse.json({
+          success: true,
+          type: 'image',
+          videoUrl: null,
+          imageUrl: oembed.thumbnail_url,
+          thumbnail: oembed.thumbnail_url,
+          title: oembed.title || 'Instagram Photo',
+          author: oembed.author_name || '',
+          images: [{ url: oembed.thumbnail_url, thumbnail: oembed.thumbnail_url, type: 'image' }],
+          count: 1,
+        });
+      }
+    } catch (err) {
+      console.warn('[oEmbed Post Error]:', err.message);
+    }
+
+    return NextResponse.json(
+      { error: 'Could not extract media from this link. Please verify the post is public.' },
+      { status: 404 }
     );
 
-    const images = results
-      .filter((r) => r.status === 'fulfilled' && r.value?.thumbnail_url)
-      .map((r) => ({
-        url: r.value.thumbnail_url,
-        thumbnail: r.value.thumbnail_url,
-        title: r.value.title || '',
-      }));
-
-    if (images.length === 0) {
-      return NextResponse.json(
-        { error: 'Could not load photos from this post.' },
-        { status: 404 }
-      );
-    }
-
-    const firstOembed = results.find(
-      (r) => r.status === 'fulfilled' && r.value?.author_name
-    )?.value;
-
-    return NextResponse.json({
-      success: true,
-      type: images.length === 1 ? 'image' : 'carousel',
-      videoUrl: null,
-      imageUrl: images[0].url,
-      thumbnail: images[0].url,
-      title: firstOembed?.title || 'Instagram Carousel Post',
-      author: firstOembed?.author_name || '',
-      images,
-      count: images.length,
-    });
-
   } catch (error) {
-    console.error('[Download API Error]:', error);
+    console.error('[API Route Download Exception]:', error.message);
     return NextResponse.json(
-      { error: 'Internal server error while processing request' },
+      { error: 'An unexpected error occurred while extracting media. Please try again later.' },
       { status: 500 }
     );
   }
