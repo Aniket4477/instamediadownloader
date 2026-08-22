@@ -666,7 +666,6 @@ export default function Home() {
             <div>Email: <a href="mailto:aniketpat@gmail.com">aniketpat@gmail.com</a></div>
             <div>GitHub: <a href="https://github.com/Aniket4477/instamediadownloader" target="_blank" rel="noreferrer">https://github.com/Aniket4477/instamediadownloader</a></div>
             <div style={{ marginTop: '0.4rem' }}>Thanks for checking out! Crafted for speed.</div>
-            <div>Simple downloads for public Instagram media.</div>
           </div>
 
           <div className="footer-center">
