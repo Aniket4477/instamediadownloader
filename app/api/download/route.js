@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 import puppeteer from 'puppeteer-core';
-import { extractStoriesViaBrowser, unwrapDirectCdnUrl, getChromiumConfig } from './storyExtractor';
+import { extractStoriesViaBrowser, unwrapDirectCdnUrl, isInstagramCdn, getChromiumConfig } from './storyExtractor';
+
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
 /**
  * Cross-platform yt-dlp binary resolver (uses YTDLP_PATH env or system PATH 'yt-dlp')
@@ -40,48 +43,19 @@ function runYtdlp(url, args = []) {
 }
 
 /**
- * Executes yt-dlp for flat-playlist carousel extraction
- */
-function runYtdlpCarousel(url) {
-  return new Promise((resolve) => {
-    try {
-      const proc = spawn(
-        /*turbopackIgnore: true*/ YTDLP_BIN,
-        ['--ignore-errors', '--flat-playlist', '--dump-single-json', '--quiet', url],
-        { shell: false }
-      );
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d.toString(); });
-      proc.stderr.on('data', (d) => { stderr += d.toString(); });
-      proc.on('error', (err) => {
-        resolve({ info: null, stderr: err.message || 'yt-dlp not found' });
-      });
-      proc.on('close', () => {
-        let info = null;
-        if (stdout.trim()) {
-          try { info = JSON.parse(stdout.trim()); } catch { /* ignore */ }
-        }
-        resolve({ info, stderr });
-      });
-    } catch (err) {
-      resolve({ info: null, stderr: err.message });
-    }
-  });
-}
-
-function isInstagramCdn(url) {
-  if (!url) return false;
-  return url.includes('cdninstagram.com') || url.includes('fbcdn.net');
-}
-
-/**
  * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
- * Extracts ALL available items in a carousel post preserving image and video streams.
+ * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
  */
 async function extractPostViaBrowser(postUrl) {
   let browser;
   try {
+    const isReel = postUrl.includes('/reel/') || postUrl.includes('/tv/');
+    const providerUrl = isReel
+      ? 'https://igram.world/en1/reels-downloader'
+      : 'https://igram.world/en1/carousel-downloader';
+
+    console.log(`[PostExtractor] Navigating to ${providerUrl} for: ${postUrl}`);
+
     const config = await getChromiumConfig();
     browser = await puppeteer.launch({
       executablePath: config.executablePath,
@@ -99,128 +73,86 @@ async function extractPostViaBrowser(postUrl) {
       window.chrome = { runtime: {} };
     });
 
-    // 1. Try Provider A: IGram.world for posts & carousels
-    try {
-      console.log(`[PostExtractor] Querying IGram for: ${postUrl}`);
-      await page.goto('https://igram.world/', { waitUntil: 'networkidle2', timeout: 20000 });
-
-      const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
-      if (input) {
-        await input.type(postUrl, { delay: 20 });
-        await page.evaluate(() => {
-          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
-          if (btn) btn.click();
-        });
-
-        for (let sec = 0; sec < 12; sec++) {
-          await new Promise((r) => setTimeout(r, 1000));
-          const count = await page.evaluate(() => {
-            return document.querySelectorAll('a.button__download, a[href*="igram.world/get"], a[download]').length;
-          });
-          if (count > 0) break;
-        }
-
-        const items = await page.evaluate(() => {
-          const list = [];
-          document.querySelectorAll('a.button__download, a[href*="igram.world/get"], a[download]').forEach((a) => {
-            if (a.href) {
-              const text = (a.innerText || '').toLowerCase();
-              const isVideo = text.includes('video') || text.includes('.mp4') || a.href.includes('.mp4');
-              list.push({
-                url: a.href,
-                type: isVideo ? 'video' : 'image',
-              });
-            }
-          });
-          return list;
-        });
-
-        if (items.length > 0) {
-          const media = [];
-          const seen = new Set();
-          for (const item of items) {
-            const cleanUrl = unwrapDirectCdnUrl(item.url);
-            if (isInstagramCdn(cleanUrl) && !seen.has(cleanUrl)) {
-              seen.add(cleanUrl);
-              media.push({
-                type: item.type,
-                url: cleanUrl,
-                thumbnail: cleanUrl,
-              });
-            }
+    let convertApiData = null;
+    page.on('response', async (res) => {
+      const u = res.url();
+      if (u.includes('api-wh.igram.world/api/convert')) {
+        try {
+          const json = await res.json();
+          if (json?.url && Array.isArray(json.url)) {
+            convertApiData = json.url;
           }
-
-          if (media.length > 0) {
-            console.log(`[PostExtractor] IGram extracted ${media.length} items for post`);
-            return media;
-          }
-        }
+        } catch { /* ignore */ }
       }
-    } catch (igramErr) {
-      console.warn('[PostExtractor] IGram post extraction warning:', igramErr.message);
+    });
+
+    await page.goto(providerUrl, { waitUntil: 'networkidle2', timeout: 20000 });
+
+    const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
+    if (!input) return [];
+
+    await input.type(postUrl, { delay: 20 });
+    await page.click('button.search-form__button, button[type="submit"]');
+
+    // Wait for conversion response or DOM download buttons
+    for (let sec = 0; sec < 12; sec++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (convertApiData && convertApiData.length > 0) break;
+      const count = await page.evaluate(() => {
+        return document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length;
+      });
+      if (count > 0) break;
     }
 
-    // 2. Try Provider B: FastDL / InDown for posts & carousels
-    try {
-      console.log(`[PostExtractor] Trying fallback FastDL for: ${postUrl}`);
-      await page.goto('https://fastdl.app/en', { waitUntil: 'networkidle2', timeout: 20000 });
+    const items = [];
+    const seen = new Set();
 
-      const input2 = await page.$('#search-form-input, input[name="url"], input[type="text"]');
-      if (input2) {
-        await input2.type(postUrl, { delay: 20 });
-        await page.evaluate(() => {
-          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
-          if (btn) btn.click();
-        });
-
-        for (let sec = 0; sec < 10; sec++) {
-          await new Promise((r) => setTimeout(r, 1000));
-          const count = await page.evaluate(() => {
-            return document.querySelectorAll('a.button__download, a[download]').length;
+    // Priority 1: Use direct convert API data if captured
+    if (convertApiData && Array.isArray(convertApiData)) {
+      for (const entry of convertApiData) {
+        const rawUrl = entry.url;
+        const cleanUrl = unwrapDirectCdnUrl(rawUrl);
+        const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
+        if (cleanUrl && !seen.has(cleanUrl)) {
+          seen.add(cleanUrl);
+          items.push({
+            type: isVideo ? 'video' : 'image',
+            url: cleanUrl,
+            thumbnail: cleanUrl,
           });
-          if (count > 0) break;
-        }
-
-        const items2 = await page.evaluate(() => {
-          const list = [];
-          document.querySelectorAll('a.button__download, a[download]').forEach((a) => {
-            if (a.href) {
-              const text = (a.innerText || '').toLowerCase();
-              const isVideo = text.includes('video') || text.includes('.mp4') || a.href.includes('.mp4');
-              list.push({
-                url: a.href,
-                type: isVideo ? 'video' : 'image',
-              });
-            }
-          });
-          return list;
-        });
-
-        if (items2.length > 0) {
-          const media2 = [];
-          const seen2 = new Set();
-          for (const item of items2) {
-            const cleanUrl = unwrapDirectCdnUrl(item.url);
-            if (isInstagramCdn(cleanUrl) && !seen2.has(cleanUrl)) {
-              seen2.add(cleanUrl);
-              media2.push({
-                type: item.type,
-                url: cleanUrl,
-                thumbnail: cleanUrl,
-              });
-            }
-          }
-          if (media2.length > 0) {
-            console.log(`[PostExtractor] FastDL extracted ${media2.length} items for post`);
-            return media2;
-          }
         }
       }
-    } catch (fastdlErr) {
-      console.warn('[PostExtractor] FastDL post extraction warning:', fastdlErr.message);
     }
 
-    return [];
+    // Priority 2: Fallback to rendered DOM download buttons
+    if (items.length === 0) {
+      const domLinks = await page.evaluate(() => {
+        const list = [];
+        document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach((a) => {
+          if (a.href) {
+            const isVideo = (a.innerText || '').toLowerCase().includes('video') || a.href.includes('.mp4');
+            list.push({ href: a.href, isVideo });
+          }
+        });
+        return list;
+      });
+
+      for (const raw of domLinks) {
+        const cleanUrl = unwrapDirectCdnUrl(raw.href);
+        const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
+        if (cleanUrl && !seen.has(cleanUrl)) {
+          seen.add(cleanUrl);
+          items.push({
+            type: isVideo ? 'video' : 'image',
+            url: cleanUrl,
+            thumbnail: cleanUrl,
+          });
+        }
+      }
+    }
+
+    console.log(`[PostExtractor] Successfully extracted ${items.length} items`);
+    return items;
   } catch (err) {
     console.error('[PostExtractor] Browser Extraction Error:', err.message);
     return [];
@@ -334,11 +266,11 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE B: Reels / Single Videos via yt-dlp (if available) ──────────────
+    // ── CASE B: Fast Path via local yt-dlp (if available) ────────────────────
     const { info, stderr } = await runYtdlp(url, ['--dump-single-json']);
 
     if (info) {
-      // Check if yt-dlp returned multi-entry carousel
+      // Multi-entry carousel
       if (Array.isArray(info.entries) && info.entries.length > 0) {
         const validEntries = info.entries.filter((e) => e && (e.url || e.thumbnail));
         if (validEntries.length > 0) {
@@ -391,7 +323,7 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE C: Multi-Item Carousel or Post via Serverless Browser Extractor ──
+    // ── CASE C: Serverless Browser Extractor (Reels, Posts & Carousels) ───────
     const browserMedia = await extractPostViaBrowser(url);
     if (browserMedia.length > 0) {
       const isSingle = browserMedia.length === 1;
@@ -414,7 +346,7 @@ export async function POST(request) {
       });
     }
 
-    // ── CASE D: Single Photo / Post Fallback via Instagram oEmbed ─────────────
+    // ── CASE D: Single Photo Fallback via Instagram oEmbed ───────────────────
     try {
       const oembed = await oembedFetch(url);
       if (oembed.thumbnail_url) {

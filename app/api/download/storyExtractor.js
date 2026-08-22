@@ -21,8 +21,9 @@ export async function getChromiumConfig() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--single-process',
+          '--no-zygote',
         ],
-        headless: true,
+        headless: chromium.headless ?? true,
       };
     } catch (err) {
       console.warn('[StoryExtractor] @sparticuz/chromium resolution warning:', err.message);
@@ -77,7 +78,7 @@ export async function getChromiumConfig() {
     return {
       executablePath,
       args: chromium.args || ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      headless: true,
+      headless: chromium.headless ?? true,
     };
   } catch (err) {
     throw new Error(`Chromium executable could not be located in current environment: ${err.message}`);
@@ -273,7 +274,10 @@ async function extractViaIGram(page, username) {
     const items = await page.evaluate(() => {
       const list = [];
       document.querySelectorAll('a[href*="igram.world/get"], a.button__download, a[download]').forEach((a) => {
-        if (a.href) list.push(a.href);
+        if (a.href) {
+          const isVideo = (a.innerText || '').toLowerCase().includes('video') || a.href.includes('.mp4');
+          list.push({ href: a.href, isVideo });
+        }
       });
       return list;
     });
@@ -281,13 +285,12 @@ async function extractViaIGram(page, username) {
     const stories = [];
     const seen = new Set();
     for (const raw of items) {
-      const clean = unwrapDirectCdnUrl(raw);
-      // Strict story check: story videos (/o1/, ig_ephemeral, .mp4) or story tags
-      const isTrueStory = clean.includes('/o1/') || clean.includes('ig_ephemeral') || clean.includes('STORY') || clean.includes('.mp4');
+      const clean = unwrapDirectCdnUrl(raw.href);
+      const isTrueStory = clean.includes('/o1/') || clean.includes('ig_ephemeral') || clean.includes('STORY') || clean.includes('.mp4') || raw.isVideo;
       if (isInstagramCdn(clean) && isTrueStory && !seen.has(clean)) {
         seen.add(clean);
         stories.push({
-          type: clean.includes('.mp4') ? 'video' : 'image',
+          type: raw.isVideo || clean.includes('.mp4') ? 'video' : 'image',
           url: clean,
           thumbnail: clean,
         });
