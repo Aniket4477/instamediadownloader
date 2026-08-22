@@ -15,16 +15,9 @@ export async function getChromiumConfig() {
       const executablePath = await chromium.executablePath();
       return {
         executablePath,
-        args: [
-          ...chromium.args,
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--single-process',
-          '--no-zygote',
-        ],
-        headless: true,
+        args: chromium.args,
+        headless: chromium.headless ?? true,
+        defaultViewport: chromium.defaultViewport,
       };
     } catch (err) {
       console.warn('[StoryExtractor] @sparticuz/chromium resolution warning:', err.message);
