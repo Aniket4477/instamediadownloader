@@ -273,60 +273,94 @@ async function extractPostViaBrowser(postUrl) {
     });
     await input.press('Enter');
 
-    // Wait for conversion response or DOM download buttons
-    for (let sec = 0; sec < 10; sec++) {
+    // ── Wait up to 12s for first conversion response or download buttons ──────
+    for (let sec = 0; sec < 12; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
-      if (convertApiData && convertApiData.length > 0) break;
-      const count = await page.evaluate(() => {
-        return document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length;
-      });
+      if (convertApiData.length > 0) break;
+      const count = await page.evaluate(() =>
+        document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length
+      );
       if (count > 0) break;
+    }
+
+    // ── Navigate carousel slides to collect all items ─────────────────────────
+    // igram.world renders carousel posts as a swiper/slider. Clicking the next
+    // button triggers a new api/convert call per slide with that slide's URL.
+    // We keep clicking until disabled or no more next button (max 15 slides).
+    for (let slide = 0; slide < 15; slide++) {
+      const moved = await page.evaluate(() => {
+        const sel = [
+          '.swiper-button-next:not(.swiper-button-disabled)',
+          '.carousel-next:not([disabled])',
+          '[class*="next"]:not([disabled])',
+          'button[aria-label*="next" i]:not([disabled])',
+          'button[aria-label*="Next" i]:not([disabled])',
+        ].join(', ');
+        const btn = document.querySelector(sel);
+        if (btn) { btn.click(); return true; }
+        return false;
+      });
+      if (!moved) break;
+      // Give igram.world time to fire the api/convert for the new slide
+      await new Promise((r) => setTimeout(r, 1800));
     }
 
     const items = [];
     const seen = new Set();
 
-    // Priority 1: Use direct convert API data if captured
-    if (convertApiData && Array.isArray(convertApiData)) {
-      for (const entry of convertApiData) {
-        const rawUrl = entry.url;
-        const cleanUrl = unwrapDirectCdnUrl(rawUrl);
-        const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
-        if (cleanUrl && !seen.has(cleanUrl)) {
-          seen.add(cleanUrl);
-          items.push({
-            type: isVideo ? 'video' : 'image',
-            url: cleanUrl,
-            thumbnail: cleanUrl,
-          });
-        }
+    // Priority 1: Use accumulated api/convert data (one entry per slide)
+    for (const entry of convertApiData) {
+      const rawUrl = entry.url;
+      const cleanUrl = unwrapDirectCdnUrl(rawUrl);
+      const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
+      if (cleanUrl && !seen.has(cleanUrl)) {
+        seen.add(cleanUrl);
+        items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
       }
     }
 
-    // Priority 2: Fallback to rendered DOM download buttons
-    if (items.length === 0) {
-      const domLinks = await page.evaluate(() => {
-        const list = [];
-        document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach((a) => {
-          if (a.href) {
-            const isVideo = (a.innerText || '').toLowerCase().includes('video') || a.href.includes('.mp4');
-            list.push({ href: a.href, isVideo });
-          }
-        });
-        return list;
+    // Priority 2: Comprehensive DOM scan — finds EVERY CDN URL in the page
+    // including hidden carousel slides not yet revealed by the slider.
+    const domMedia = await page.evaluate(() => {
+      const results = [];
+      const seenInDom = new Set();
+
+      function add(url, isVideo) {
+        if (!url || !url.startsWith('http')) return;
+        // Only Instagram CDN URLs are useful
+        const isCdn = url.includes('cdninstagram.com') || url.includes('fbcdn.net');
+        if (!isCdn || seenInDom.has(url)) return;
+        seenInDom.add(url);
+        results.push({ href: url, isVideo });
+      }
+
+      // All download-button anchors
+      document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach(a => {
+        add(a.href, a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video'));
+      });
+      // All anchors with CDN hrefs (including hidden slides)
+      document.querySelectorAll('a[href]').forEach(a => {
+        add(a.href, a.href.includes('.mp4'));
+      });
+      // All img tags (preview images for each slide)
+      document.querySelectorAll('img[src], img[data-src], img[data-lazy]').forEach(img => {
+        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy') || '';
+        add(src, false);
+      });
+      // All video/source elements
+      document.querySelectorAll('video[src], source[src]').forEach(v => {
+        add(v.src || v.getAttribute('src'), true);
       });
 
-      for (const raw of domLinks) {
-        const cleanUrl = unwrapDirectCdnUrl(raw.href);
-        const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
-        if (cleanUrl && !seen.has(cleanUrl)) {
-          seen.add(cleanUrl);
-          items.push({
-            type: isVideo ? 'video' : 'image',
-            url: cleanUrl,
-            thumbnail: cleanUrl,
-          });
-        }
+      return results;
+    });
+
+    for (const raw of domMedia) {
+      const cleanUrl = unwrapDirectCdnUrl(raw.href);
+      const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
+      if (cleanUrl && !seen.has(cleanUrl)) {
+        seen.add(cleanUrl);
+        items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
       }
     }
 
