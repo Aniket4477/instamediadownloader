@@ -53,7 +53,7 @@ async function extractViaInstaSaver(page, username, targetStoryId = null) {
 
     const inputSelector = 'input[type="text"], input[name="url"], input[placeholder*="username"], input[placeholder*="Instagram"]';
     await page.waitForSelector(inputSelector, { timeout: 10000 });
-    await page.type(inputSelector, username, { delay: 20 });
+    await page.type(inputSelector, username, { delay: 25 });
 
     await page.evaluate(() => {
       const btns = [...document.querySelectorAll('button, a.btn')];
@@ -67,23 +67,30 @@ async function extractViaInstaSaver(page, username, targetStoryId = null) {
       if (submitBtn) submitBtn.click();
     });
 
-    // Wait for the stories cards to appear
-    await new Promise((r) => setTimeout(r, 6500));
+    // Dynamically poll up to 14 seconds for stories cards/buttons to load (handles Turnstile)
+    let btnCount = 0;
+    for (let sec = 0; sec < 14; sec++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      btnCount = await page.evaluate(() => document.querySelectorAll('.grid button').length);
+      if (btnCount > 0) {
+        console.log(`[Story] Found ${btnCount} active story buttons after ${sec + 1}s!`);
+        break;
+      }
+    }
 
-    // Get number of active story download buttons
-    const btnCount = await page.evaluate(() => {
-      return document.querySelectorAll('.grid button').length;
-    });
+    if (btnCount === 0) {
+      console.log(`[Story] No active story items found for @${username}`);
+      page.off('response', responseHandler);
+      return [];
+    }
 
-    console.log(`[Story] InstaSaver found ${btnCount} active story items for @${username}`);
-
-    // Click each download button sequentially to trigger the full HD video streams
+    // Click each download button sequentially to trigger the direct CDN HD video streams
     for (let i = 0; i < btnCount; i++) {
       await page.evaluate((idx) => {
         const btns = document.querySelectorAll('.grid button');
         if (btns[idx]) btns[idx].click();
       }, i);
-      await new Promise((r) => setTimeout(r, 1800));
+      await new Promise((r) => setTimeout(r, 1600));
     }
 
     page.off('response', responseHandler);
@@ -183,7 +190,7 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-blink-features=AutomationControlled',
-        '--window-size=1280,900',
+        '--window-size=1366,768',
       ],
     });
 
@@ -191,6 +198,11 @@ async function extractStoriesViaBrowser(usernameOrUrl) {
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
+
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = { runtime: {} };
+    });
 
     // Extract ALL active public stories for both links and usernames
     const storiesList = await extractViaInstaSaver(page, username, targetStoryId);
