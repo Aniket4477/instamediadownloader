@@ -263,18 +263,18 @@ async function extractPostViaBrowser(rawPostUrl) {
         url: isReel ? 'https://indown.io/reels' : 'https://indown.io/photo',
         input: '#link',
         submit: '#get',
-        selector: 'a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], img[src*="fetch"], img[src*="cdninstagram"]',
+        selector: 'a.btn-download, a[href*="cdninstagram"], a[href*="fetch"]',
+      },
+      {
+        name: 'sssinstagram.com',
+        url: 'https://sssinstagram.com/',
+        input: '#main_input',
+        submit: 'button[type="submit"]',
+        selector: 'a.download_button, a[href*="get?"], a[href*="cdninstagram"]',
       },
       {
         name: 'fastdl.app',
         url: isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
-        input: '#search-form-input',
-        submit: 'button.search-form__button',
-        selector: 'a.button__download, a[href*="get?"], a[download]',
-      },
-      {
-        name: 'igram.world',
-        url: isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
         input: '#search-form-input',
         submit: 'button.search-form__button',
         selector: 'a.button__download, a[href*="get?"], a[download]',
@@ -304,7 +304,7 @@ async function extractPostViaBrowser(rawPostUrl) {
           }
         });
 
-        await page.goto(prov.url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        await page.goto(prov.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
         const input = await page.$(prov.input + ', input[name="url"], input[type="text"]');
         if (!input) {
           await page.close();
@@ -317,15 +317,17 @@ async function extractPostViaBrowser(rawPostUrl) {
           if (btn) btn.click();
         }, prov.submit);
 
-        // Grace period for form navigation / AJAX response
-        await new Promise((r) => setTimeout(r, 4000));
-
-        for (let i = 0; i < 6; i++) {
+        // Wait up to 15s for results to render
+        for (let i = 0; i < 15; i++) {
           await new Promise((r) => setTimeout(r, 1000));
           if (convertApiUrls.length > 0) break;
           try {
             const count = await page.evaluate((sel) => document.querySelectorAll(sel).length, prov.selector);
-            if (count > 0) break;
+            if (count > 0) {
+              // Wait 1 extra second for all carousel elements to finish populating
+              await new Promise((r) => setTimeout(r, 1000));
+              break;
+            }
           } catch {
             // Ignore context destruction during active navigation
           }
