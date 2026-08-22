@@ -220,11 +220,10 @@ async function extractPostViaBrowser(postUrl) {
   let browser;
   try {
     const isReel = postUrl.includes('/reel/') || postUrl.includes('/tv/');
-    const providerUrl = isReel
-      ? 'https://igram.world/en1/reels-downloader'
-      : 'https://igram.world/en1/';
-
-    console.log(`[PostExtractor] Navigating to ${providerUrl} for: ${postUrl}`);
+    const providers = [
+      isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
+      isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
+    ];
 
     const config = await getChromiumConfig();
     browser = await puppeteer.launch({
@@ -233,139 +232,123 @@ async function extractPostViaBrowser(postUrl) {
       args: config.args,
     });
 
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
-    await page.setExtraHTTPHeaders({
-      'accept-language': 'en-US,en;q=0.9',
-    });
+    for (const providerUrl of providers) {
+      try {
+        console.log(`[PostExtractor] Navigating to ${providerUrl} for: ${postUrl}`);
+        const page = await browser.newPage();
+        await page.setUserAgent(
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        );
+        await page.setExtraHTTPHeaders({
+          'accept-language': 'en-US,en;q=0.9',
+        });
 
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      window.chrome = { runtime: {} };
-    });
+        await page.evaluateOnNewDocument(() => {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          window.chrome = { runtime: {} };
+        });
 
-    // Accumulate ALL carousel items (not overwrite) — igram.world may fire
-    // one api/convert call per carousel slide; overwriting loses previous items.
-    let convertApiData = [];
-    page.on('response', async (res) => {
-      const u = res.url();
-      if (u.includes('api-wh.igram.world/api/convert')) {
-        try {
-          const json = await res.json();
-          if (json?.url && Array.isArray(json.url)) {
-            convertApiData.push(...json.url); // accumulate, not overwrite
+        let convertApiData = [];
+        page.on('response', async (res) => {
+          const u = res.url();
+          if (u.includes('api/convert') || u.includes('api-wh')) {
+            try {
+              const json = await res.json();
+              if (json?.url && Array.isArray(json.url)) {
+                convertApiData.push(...json.url);
+              }
+            } catch { /* ignore */ }
           }
-        } catch { /* ignore */ }
-      }
-    });
+        });
 
-    await page.goto(providerUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
+        await page.goto(providerUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
 
-    const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
-    if (!input) return [];
+        const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
+        if (!input) {
+          await page.close();
+          continue;
+        }
 
-    await input.type(postUrl, { delay: 10 });
-    await page.evaluate(() => {
-      const btn = document.querySelector('button.search-form__button, button[type="submit"]');
-      if (btn) btn.click();
-    });
-    await input.press('Enter');
+        await input.type(postUrl, { delay: 10 });
+        await page.evaluate(() => {
+          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
+          if (btn) btn.click();
+        });
+        await input.press('Enter');
 
-    // ── Wait up to 12s for first conversion response or download buttons ──────
-    for (let sec = 0; sec < 12; sec++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      if (convertApiData.length > 0) break;
-      const count = await page.evaluate(() =>
-        document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length
-      );
-      if (count > 0) break;
-    }
+        // Wait up to 8s for convert response or download buttons
+        for (let sec = 0; sec < 8; sec++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          if (convertApiData.length > 0) break;
+          const count = await page.evaluate(() =>
+            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length
+          );
+          if (count > 0) break;
+        }
 
-    // ── Navigate carousel slides to collect all items ─────────────────────────
-    // igram.world renders carousel posts as a swiper/slider. Clicking the next
-    // button triggers a new api/convert call per slide with that slide's URL.
-    // We keep clicking until disabled or no more next button (max 15 slides).
-    for (let slide = 0; slide < 15; slide++) {
-      const moved = await page.evaluate(() => {
-        const sel = [
-          '.swiper-button-next:not(.swiper-button-disabled)',
-          '.carousel-next:not([disabled])',
-          '[class*="next"]:not([disabled])',
-          'button[aria-label*="next" i]:not([disabled])',
-          'button[aria-label*="Next" i]:not([disabled])',
-        ].join(', ');
-        const btn = document.querySelector(sel);
-        if (btn) { btn.click(); return true; }
-        return false;
-      });
-      if (!moved) break;
-      // Give igram.world time to fire the api/convert for the new slide
-      await new Promise((r) => setTimeout(r, 1800));
-    }
+        const items = [];
+        const seen = new Set();
 
-    const items = [];
-    const seen = new Set();
+        // Priority 1: Use accumulated api/convert data
+        for (const entry of convertApiData) {
+          const rawUrl = entry.url;
+          const cleanUrl = unwrapDirectCdnUrl(rawUrl);
+          const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
+          if (cleanUrl && !seen.has(cleanUrl)) {
+            seen.add(cleanUrl);
+            items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
+          }
+        }
 
-    // Priority 1: Use accumulated api/convert data (one entry per slide)
-    for (const entry of convertApiData) {
-      const rawUrl = entry.url;
-      const cleanUrl = unwrapDirectCdnUrl(rawUrl);
-      const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
-      if (cleanUrl && !seen.has(cleanUrl)) {
-        seen.add(cleanUrl);
-        items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
-      }
-    }
+        // Priority 2: DOM scan for download buttons and media
+        if (items.length === 0) {
+          const domMedia = await page.evaluate(() => {
+            const results = [];
+            const seenInDom = new Set();
 
-    // Priority 2: Comprehensive DOM scan — finds EVERY CDN URL in the page
-    // including hidden carousel slides not yet revealed by the slider.
-    const domMedia = await page.evaluate(() => {
-      const results = [];
-      const seenInDom = new Set();
+            function add(url, isVideo) {
+              if (!url || !url.startsWith('http')) return;
+              const isCdn = url.includes('cdninstagram.com') || url.includes('fbcdn.net') || url.includes('get?');
+              if (!isCdn || seenInDom.has(url)) return;
+              seenInDom.add(url);
+              results.push({ href: url, isVideo });
+            }
 
-      function add(url, isVideo) {
-        if (!url || !url.startsWith('http')) return;
-        // Only Instagram CDN URLs are useful
-        const isCdn = url.includes('cdninstagram.com') || url.includes('fbcdn.net');
-        if (!isCdn || seenInDom.has(url)) return;
-        seenInDom.add(url);
-        results.push({ href: url, isVideo });
-      }
+            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach(a => {
+              add(a.href, a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video'));
+            });
+            document.querySelectorAll('a[href*="cdninstagram"]').forEach(a => {
+              add(a.href, a.href.includes('.mp4'));
+            });
+            document.querySelectorAll('img[src*="cdninstagram"], img[src*="fbcdn"]').forEach(img => {
+              add(img.src, false);
+            });
 
-      // All download-button anchors
-      document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach(a => {
-        add(a.href, a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video'));
-      });
-      // All anchors with CDN hrefs (including hidden slides)
-      document.querySelectorAll('a[href]').forEach(a => {
-        add(a.href, a.href.includes('.mp4'));
-      });
-      // All img tags (preview images for each slide)
-      document.querySelectorAll('img[src], img[data-src], img[data-lazy]').forEach(img => {
-        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy') || '';
-        add(src, false);
-      });
-      // All video/source elements
-      document.querySelectorAll('video[src], source[src]').forEach(v => {
-        add(v.src || v.getAttribute('src'), true);
-      });
+            return results;
+          });
 
-      return results;
-    });
+          for (const raw of domMedia) {
+            const cleanUrl = unwrapDirectCdnUrl(raw.href);
+            const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
+            if (cleanUrl && !seen.has(cleanUrl)) {
+              seen.add(cleanUrl);
+              items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
+            }
+          }
+        }
 
-    for (const raw of domMedia) {
-      const cleanUrl = unwrapDirectCdnUrl(raw.href);
-      const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
-      if (cleanUrl && !seen.has(cleanUrl)) {
-        seen.add(cleanUrl);
-        items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
+        await page.close();
+
+        if (items.length > 0) {
+          console.log(`[PostExtractor] Successfully extracted ${items.length} items via ${providerUrl}`);
+          return items;
+        }
+      } catch (provErr) {
+        console.warn(`[PostExtractor] Provider ${providerUrl} error:`, provErr.message);
       }
     }
 
-    console.log(`[PostExtractor] Successfully extracted ${items.length} items`);
-    return items;
+    return [];
   } catch (err) {
     console.error('[PostExtractor] Browser Extraction Error:', err.message);
     return [];

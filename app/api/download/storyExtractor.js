@@ -90,6 +90,8 @@ export function unwrapDirectCdnUrl(url) {
   if (!url || typeof url !== 'string') return url;
   try {
     if (
+      url.includes('fastdl.app/get') ||
+      url.includes('media.fastdl.app/get') ||
       url.includes('igram.world/get') ||
       url.includes('storiesig.info/get') ||
       url.includes('anonyig.com/get') ||
@@ -97,12 +99,12 @@ export function unwrapDirectCdnUrl(url) {
     ) {
       const parsed = new URL(url);
       const innerUri = parsed.searchParams.get('uri');
-      if (innerUri && innerUri.startsWith('http')) return innerUri;
+      if (innerUri && innerUri.startsWith('http')) return decodeURIComponent(innerUri);
     }
     if (url.includes('indown.io/fetch')) {
       const parsed = new URL(url);
       const innerUrl = parsed.searchParams.get('url');
-      if (innerUrl && innerUrl.startsWith('http')) return innerUrl;
+      if (innerUrl && innerUrl.startsWith('http')) return decodeURIComponent(innerUrl);
     }
   } catch {
     // fallback
