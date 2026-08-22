@@ -505,11 +505,34 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE B: Fast Path via local yt-dlp (if available) ────────────────────
+    // ── CASE B: Multi-Tier Browser Extractor (Primary for Carousels, Photos, Reels) ──
+    const browserMedia = await extractPostViaBrowser(url);
+    if (browserMedia && browserMedia.length > 0) {
+      const isSingle = browserMedia.length === 1;
+      const firstItem = browserMedia[0];
+
+      return NextResponse.json({
+        success: true,
+        type: isSingle ? firstItem.type : 'carousel',
+        videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
+        imageUrl: firstItem.thumbnail || firstItem.url,
+        thumbnail: firstItem.thumbnail || firstItem.url,
+        title: 'Instagram Post',
+        author: '',
+        images: browserMedia.map((m) => ({
+          url: m.url,
+          thumbnail: m.thumbnail || m.url,
+          type: m.type,
+        })),
+        count: browserMedia.length,
+      });
+    }
+
+    // ── CASE C: yt-dlp Extractor (Multi-entry or Video Reel) ───────────────────
     const { info, stderr } = await runYtdlp(url, ['--dump-single-json']);
 
     if (info) {
-      // Multi-entry carousel
+      // Multi-entry carousel from yt-dlp
       if (Array.isArray(info.entries) && info.entries.length > 0) {
         const validEntries = info.entries.filter((e) => e && (e.url || e.thumbnail));
         if (validEntries.length > 0) {
@@ -538,7 +561,7 @@ export async function POST(request) {
       }
 
       // Single video / Reel
-      if (info.url) {
+      if (info.url && (info.ext === 'mp4' || info.vcodec !== 'none' || url.includes('/reel/'))) {
         return NextResponse.json({
           success: true,
           type: 'video',
@@ -562,9 +585,7 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE C: Direct HTTP Carousel Extractor (no Puppeteer, works on Vercel) ─
-    // This runs BEFORE Puppeteer because yt-dlp is unavailable on Vercel and
-    // the browser carousel only returns 1 item at a time (slider UI).
+    // ── CASE D: Direct HTTP Carousel Extractor Fallback ─────────────────────────
     const directMedia = await fetchCarouselDirect(url);
     if (directMedia.length > 0) {
       const isSingle = directMedia.length === 1;
@@ -583,29 +604,6 @@ export async function POST(request) {
           type: m.type,
         })),
         count: directMedia.length,
-      });
-    }
-
-    // ── CASE D: Serverless Browser Extractor (Puppeteer fallback) ───────────────
-    const browserMedia = await extractPostViaBrowser(url);
-    if (browserMedia.length > 0) {
-      const isSingle = browserMedia.length === 1;
-      const firstItem = browserMedia[0];
-
-      return NextResponse.json({
-        success: true,
-        type: isSingle ? firstItem.type : 'carousel',
-        videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
-        imageUrl: firstItem.thumbnail || firstItem.url,
-        thumbnail: firstItem.thumbnail || firstItem.url,
-        title: 'Instagram Post',
-        author: '',
-        images: browserMedia.map((m) => ({
-          url: m.url,
-          thumbnail: m.thumbnail || m.url,
-          type: m.type,
-        })),
-        count: browserMedia.length,
       });
     }
 
