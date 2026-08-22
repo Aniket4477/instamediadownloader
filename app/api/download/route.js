@@ -52,7 +52,7 @@ async function extractPostViaBrowser(postUrl) {
     const isReel = postUrl.includes('/reel/') || postUrl.includes('/tv/');
     const providerUrl = isReel
       ? 'https://igram.world/en1/reels-downloader'
-      : 'https://igram.world/en1/carousel-downloader';
+      : 'https://igram.world/en1/';
 
     console.log(`[PostExtractor] Navigating to ${providerUrl} for: ${postUrl}`);
 
@@ -67,6 +67,9 @@ async function extractPostViaBrowser(postUrl) {
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
+    await page.setExtraHTTPHeaders({
+      'accept-language': 'en-US,en;q=0.9',
+    });
 
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -86,16 +89,20 @@ async function extractPostViaBrowser(postUrl) {
       }
     });
 
-    await page.goto(providerUrl, { waitUntil: 'networkidle2', timeout: 20000 });
+    await page.goto(providerUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
 
     const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
     if (!input) return [];
 
-    await input.type(postUrl, { delay: 20 });
-    await page.click('button.search-form__button, button[type="submit"]');
+    await input.type(postUrl, { delay: 10 });
+    await page.evaluate(() => {
+      const btn = document.querySelector('button.search-form__button, button[type="submit"]');
+      if (btn) btn.click();
+    });
+    await input.press('Enter');
 
     // Wait for conversion response or DOM download buttons
-    for (let sec = 0; sec < 12; sec++) {
+    for (let sec = 0; sec < 10; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
       if (convertApiData && convertApiData.length > 0) break;
       const count = await page.evaluate(() => {

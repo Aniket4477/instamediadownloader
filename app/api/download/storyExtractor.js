@@ -15,7 +15,8 @@ export async function getChromiumConfig() {
       const executablePath = await chromium.executablePath();
       return {
         executablePath,
-        args: chromium.args || [
+        args: [
+          ...chromium.args,
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
@@ -23,7 +24,7 @@ export async function getChromiumConfig() {
           '--single-process',
           '--no-zygote',
         ],
-        headless: chromium.headless ?? true,
+        headless: true,
       };
     } catch (err) {
       console.warn('[StoryExtractor] @sparticuz/chromium resolution warning:', err.message);
@@ -78,7 +79,7 @@ export async function getChromiumConfig() {
     return {
       executablePath,
       args: chromium.args || ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      headless: chromium.headless ?? true,
+      headless: true,
     };
   } catch (err) {
     throw new Error(`Chromium executable could not be located in current environment: ${err.message}`);
@@ -95,13 +96,13 @@ export function unwrapDirectCdnUrl(url) {
       url.includes('instasaver.io/api/media/proxy')
     ) {
       const parsed = new URL(url);
-      const inner = parsed.searchParams.get('uri');
-      if (inner && inner.startsWith('http')) return inner;
+      const innerUri = parsed.searchParams.get('uri');
+      if (innerUri && innerUri.startsWith('http')) return innerUri;
     }
     if (url.includes('indown.io/fetch')) {
       const parsed = new URL(url);
-      const inner = parsed.searchParams.get('url');
-      if (inner && inner.startsWith('http')) return inner;
+      const innerUrl = parsed.searchParams.get('url');
+      if (innerUrl && innerUrl.startsWith('http')) return innerUrl;
     }
   } catch {
     // fallback
@@ -136,11 +137,11 @@ async function extractViaInstaSaverPure(page, username) {
 
   try {
     console.log(`[StoryExtractor] Trying provider: InstaSaver (Primary) for @${username}`);
-    await page.goto('https://instasaver.io/en/story-viewer/', { waitUntil: 'networkidle2', timeout: 15000 });
+    await page.goto('https://instasaver.io/en/story-viewer/', { waitUntil: 'domcontentloaded', timeout: 10000 });
 
     const inputSelector = 'input[type="text"], input[placeholder*="username"], input[placeholder*="profile"]';
-    await page.waitForSelector(inputSelector, { timeout: 8000 });
-    await page.type(inputSelector, username, { delay: 15 });
+    await page.waitForSelector(inputSelector, { timeout: 5000 });
+    await page.type(inputSelector, username, { delay: 10 });
 
     await page.evaluate(() => {
       const btns = [...document.querySelectorAll('button')];
@@ -154,7 +155,7 @@ async function extractViaInstaSaverPure(page, username) {
       if (submitBtn) submitBtn.click();
     });
 
-    for (let sec = 0; sec < 12; sec++) {
+    for (let sec = 0; sec < 6; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
       if (storiesResponse) break;
     }
@@ -195,18 +196,18 @@ async function extractViaInstaSaverPure(page, username) {
 async function extractViaStorySaver(page, username) {
   try {
     console.log(`[StoryExtractor] Trying provider: StorySaver for @${username}`);
-    await page.goto('https://www.storysaver.net/en/', { waitUntil: 'networkidle2', timeout: 20000 });
+    await page.goto('https://www.storysaver.net/en/', { waitUntil: 'domcontentloaded', timeout: 10000 });
 
     const input = await page.$('#text_url, input[name="text_username"], input[type="text"]');
     if (!input) return [];
-    await input.type(username, { delay: 20 });
+    await input.type(username, { delay: 10 });
 
     await page.evaluate(() => {
       const btn = document.querySelector('#StoryButton, button.button, input[type="submit"], button[type="submit"]');
       if (btn) btn.click();
     });
 
-    for (let sec = 0; sec < 10; sec++) {
+    for (let sec = 0; sec < 6; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
       const hasResults = await page.evaluate(() => {
         return document.querySelectorAll('video, a[download], a.download_button, a[href*="cdninstagram"]').length;
@@ -252,18 +253,18 @@ async function extractViaStorySaver(page, username) {
 async function extractViaIGram(page, username) {
   try {
     console.log(`[StoryExtractor] Trying fallback: IGram.world for @${username}`);
-    await page.goto('https://igram.world/en1/story-saver', { waitUntil: 'networkidle2', timeout: 20000 });
+    await page.goto('https://igram.world/en1/story-saver', { waitUntil: 'domcontentloaded', timeout: 10000 });
 
     const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
     if (!input) return [];
-    await input.type(username, { delay: 20 });
+    await input.type(username, { delay: 10 });
 
     await page.evaluate(() => {
       const btn = document.querySelector('button.search-form__button, button[type="submit"]');
       if (btn) btn.click();
     });
 
-    for (let sec = 0; sec < 12; sec++) {
+    for (let sec = 0; sec < 6; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
       const count = await page.evaluate(() => {
         return document.querySelectorAll('a[href*="igram.world/get"], a.button__download, a[download]').length;
@@ -301,60 +302,6 @@ async function extractViaIGram(page, username) {
     return stories;
   } catch (err) {
     console.warn('[StoryExtractor] IGram.world error:', err.message);
-    return [];
-  }
-}
-
-/**
- * Provider 4 (Fallback 3): InDown.io
- * https://indown.io/insta-stories-download
- */
-async function extractViaInDown(page, username) {
-  try {
-    console.log(`[StoryExtractor] Trying fallback: InDown.io for @${username}`);
-    const storyUrl = `https://www.instagram.com/stories/${username}/`;
-    await page.goto('https://indown.io/insta-stories-download', { waitUntil: 'networkidle2', timeout: 20000 });
-
-    const input = await page.$('#link, input[name="link"]');
-    if (!input) return [];
-    await input.type(storyUrl, { delay: 20 });
-    await page.click('button[type="submit"], #get');
-
-    for (let sec = 0; sec < 12; sec++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const count = await page.evaluate(() => {
-        return document.querySelectorAll('video, a[download], a.btn-primary[href*="cdn"], a.btn-primary[href*="fetch"]').length;
-      });
-      if (count > 0) break;
-    }
-
-    const items = await page.evaluate(() => {
-      const list = [];
-      document.querySelectorAll('video, a[download], a.btn-primary[href*="cdn"], a.btn-primary[href*="fetch"]').forEach((el) => {
-        const u = el.src || el.href;
-        if (u) list.push(u);
-      });
-      return list;
-    });
-
-    const stories = [];
-    const seen = new Set();
-    for (const raw of items) {
-      const clean = unwrapDirectCdnUrl(raw);
-      if (isInstagramCdn(clean) && !seen.has(clean)) {
-        seen.add(clean);
-        stories.push({
-          type: clean.includes('.mp4') ? 'video' : 'image',
-          url: clean,
-          thumbnail: clean,
-        });
-      }
-    }
-
-    console.log(`[StoryExtractor] Provider InDown.io returned ${stories.length} items`);
-    return stories;
-  } catch (err) {
-    console.warn('[StoryExtractor] InDown.io error:', err.message);
     return [];
   }
 }
@@ -399,6 +346,9 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
+    await page.setExtraHTTPHeaders({
+      'accept-language': 'en-US,en;q=0.9',
+    });
 
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -418,11 +368,6 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
     // 3. Fallback 2: IGram.world with story-only URL filtering
     if (storiesList.length === 0) {
       storiesList = await extractViaIGram(page, username);
-    }
-
-    // 4. Fallback 3: InDown.io
-    if (storiesList.length === 0) {
-      storiesList = await extractViaInDown(page, username);
     }
 
     // Prioritize targetStoryId if requested in the original link
