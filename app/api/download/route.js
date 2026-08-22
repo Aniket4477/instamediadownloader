@@ -239,6 +239,10 @@ function deduplicateMediaItems(items) {
  * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
  * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
  */
+/**
+ * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
+ * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
+ */
 async function extractPostViaBrowser(rawPostUrl) {
   let browser;
   try {
@@ -253,162 +257,134 @@ async function extractPostViaBrowser(rawPostUrl) {
       args: config.args,
     });
 
-    // ── Tier 1: Indown.io (Highest accuracy for multi-photo carousels and reels) ──
-    try {
-      const indownUrl = isReel ? 'https://indown.io/reels' : 'https://indown.io/photo';
-      console.log(`[PostExtractor] Tier 1: Navigating to ${indownUrl} for: ${postUrl}`);
-      const page = await browser.newPage();
-      await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      );
-      await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
-
-      await page.goto(indownUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
-      const input = await page.$('#link, input[name="url"], input[type="text"]');
-      if (input) {
-        await input.type(postUrl, { delay: 10 });
-        await page.evaluate(() => {
-          const btn = document.querySelector('#get, button[type="submit"]');
-          if (btn) btn.click();
-        });
-
-        for (let i = 0; i < 8; i++) {
-          await new Promise((r) => setTimeout(r, 1000));
-          const count = await page.evaluate(() => {
-            return document.querySelectorAll('a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], img[src*="fetch"], img[src*="cdninstagram"]').length;
-          });
-          if (count > 0) break;
-        }
-
-        const rawDom = await page.evaluate(() => {
-          const links = [];
-          document.querySelectorAll('a.btn-download, a[download], a[href*="cdninstagram"], a[href*="fetch"]').forEach((a) => {
-            const h = a.href;
-            if (h && !h.includes('indown.io/photo') && !h.includes('tiktok') && !h.includes('stories')) {
-              links.push({ url: h, isVideo: h.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
-            }
-          });
-          document.querySelectorAll('img[src*="fetch"], img[src*="cdninstagram"]').forEach((img) => {
-            if (img.src) links.push({ url: img.src, isVideo: false });
-          });
-          return links;
-        });
-
-        const indownItems = [];
-        for (const item of rawDom) {
-          const clean = unwrapDirectCdnUrl(item.url);
-          if (isInstagramCdn(clean)) {
-            indownItems.push({
-              type: item.isVideo || clean.includes('.mp4') ? 'video' : 'image',
-              url: clean,
-              thumbnail: clean,
-            });
-          }
-        }
-
-        const uniqueIndown = deduplicateMediaItems(indownItems);
-        await page.close();
-
-        if (uniqueIndown.length > 0) {
-          console.log(`[PostExtractor] Tier 1 (Indown) extracted ${uniqueIndown.length} items!`);
-          return uniqueIndown;
-        }
-      }
-    } catch (indownErr) {
-      console.warn('[PostExtractor] Tier 1 (Indown) warning:', indownErr.message);
-    }
-
-    // ── Tier 2 & 3: FastDL & IGram (API Interception) ──
-    const fallbackProviders = [
-      isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
-      isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
+    const providers = [
+      {
+        name: 'indown.io',
+        url: isReel ? 'https://indown.io/reels' : 'https://indown.io/photo',
+        input: '#link',
+        submit: '#get',
+        selector: 'a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], img[src*="fetch"], img[src*="cdninstagram"]',
+      },
+      {
+        name: 'fastdl.app',
+        url: isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
+        input: '#search-form-input',
+        submit: 'button.search-form__button',
+        selector: 'a.button__download, a[href*="get?"], a[download]',
+      },
+      {
+        name: 'igram.world',
+        url: isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
+        input: '#search-form-input',
+        submit: 'button.search-form__button',
+        selector: 'a.button__download, a[href*="get?"], a[download]',
+      },
     ];
 
-    for (const providerUrl of fallbackProviders) {
+    for (const prov of providers) {
+      let page;
       try {
-        console.log(`[PostExtractor] Fallback: Navigating to ${providerUrl} for: ${postUrl}`);
-        const page = await browser.newPage();
+        console.log(`[PostExtractor] Trying ${prov.name} for: ${postUrl}`);
+        page = await browser.newPage();
         await page.setUserAgent(
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         );
         await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
 
-        let convertApiData = [];
+        let convertApiUrls = [];
         page.on('response', async (res) => {
           const u = res.url();
           if (u.includes('api/convert') || u.includes('api-wh')) {
             try {
               const json = await res.json();
               if (json?.url && Array.isArray(json.url)) {
-                convertApiData.push(...json.url);
+                convertApiUrls.push(...json.url);
               }
             } catch { /* ignore */ }
           }
         });
 
-        await page.goto(providerUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
-
-        const input = await page.$('#search-form-input, input[name="url"], input[type="text"]');
+        await page.goto(prov.url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        const input = await page.$(prov.input + ', input[name="url"], input[type="text"]');
         if (!input) {
           await page.close();
           continue;
         }
 
         await input.type(postUrl, { delay: 10 });
-        await page.evaluate(() => {
-          const btn = document.querySelector('button.search-form__button, button[type="submit"]');
+        await page.evaluate((submitSel) => {
+          const btn = document.querySelector(submitSel) || document.querySelector('button[type="submit"]');
           if (btn) btn.click();
-        });
-        await input.press('Enter');
+        }, prov.submit);
 
-        for (let sec = 0; sec < 8; sec++) {
+        // Grace period for form navigation / AJAX response
+        await new Promise((r) => setTimeout(r, 4000));
+
+        for (let i = 0; i < 6; i++) {
           await new Promise((r) => setTimeout(r, 1000));
-          if (convertApiData.length > 0) break;
-          const count = await page.evaluate(() =>
-            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').length
-          );
-          if (count > 0) break;
-        }
-
-        const items = [];
-        for (const entry of convertApiData) {
-          const cleanUrl = unwrapDirectCdnUrl(entry.url);
-          const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
-          if (cleanUrl) {
-            items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
+          if (convertApiUrls.length > 0) break;
+          try {
+            const count = await page.evaluate((sel) => document.querySelectorAll(sel).length, prov.selector);
+            if (count > 0) break;
+          } catch {
+            // Ignore context destruction during active navigation
           }
         }
 
-        if (items.length === 0) {
-          const domMedia = await page.evaluate(() => {
-            const results = [];
-            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach((a) => {
-              results.push({ href: a.href, isVideo: a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
+        const rawItems = [];
+
+        // Add api/convert response items
+        for (const entry of convertApiUrls) {
+          const clean = unwrapDirectCdnUrl(entry.url);
+          if (isInstagramCdn(clean)) {
+            rawItems.push({
+              type: entry.type === 'mp4' || clean.includes('.mp4') ? 'video' : 'image',
+              url: clean,
+              thumbnail: clean,
             });
-            document.querySelectorAll('img[src*="cdninstagram"], img[src*="fbcdn"]').forEach((img) => {
-              results.push({ href: img.src, isVideo: false });
+          }
+        }
+
+        // Add DOM elements (download buttons + rendered images)
+        try {
+          const domData = await page.evaluate(() => {
+            const links = [];
+            document.querySelectorAll('a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], a[href*="get?"], a[download]').forEach((a) => {
+              const h = a.href;
+              if (h && !h.includes('tiktok') && !h.includes('stories') && !h.includes('indown.io/photo') && !h.includes('indown.io/reels')) {
+                links.push({ url: h, isVideo: h.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
+              }
             });
-            return results;
+            document.querySelectorAll('img[src*="fetch"], img[src*="cdninstagram"], img[src*="get?"]').forEach((img) => {
+              if (img.src) links.push({ url: img.src, isVideo: false });
+            });
+            return links;
           });
 
-          for (const raw of domMedia) {
-            const cleanUrl = unwrapDirectCdnUrl(raw.href);
-            const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
-            if (cleanUrl) {
-              items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
+          for (const item of domData) {
+            const clean = unwrapDirectCdnUrl(item.url);
+            if (isInstagramCdn(clean)) {
+              rawItems.push({
+                type: item.isVideo || clean.includes('.mp4') ? 'video' : 'image',
+                url: clean,
+                thumbnail: clean,
+              });
             }
           }
+        } catch (domErr) {
+          console.warn(`[PostExtractor] DOM evaluation warning on ${prov.name}:`, domErr.message);
         }
 
         await page.close();
 
-        const uniqueFallback = deduplicateMediaItems(items);
-        if (uniqueFallback.length > 0) {
-          console.log(`[PostExtractor] Fallback extracted ${uniqueFallback.length} items via ${providerUrl}`);
-          return uniqueFallback;
+        const uniqueItems = deduplicateMediaItems(rawItems);
+        if (uniqueItems.length > 0) {
+          console.log(`[PostExtractor] Successfully extracted ${uniqueItems.length} items via ${prov.name}`);
+          return uniqueItems;
         }
       } catch (provErr) {
-        console.warn(`[PostExtractor] Fallback ${providerUrl} error:`, provErr.message);
+        console.warn(`[PostExtractor] Provider ${prov.name} error:`, provErr.message);
+        if (page) await page.close().catch(() => {});
       }
     }
 
