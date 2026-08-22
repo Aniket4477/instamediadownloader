@@ -114,20 +114,94 @@ export function isInstagramCdn(url) {
 }
 
 /**
- * Provider 1 (Primary): StorySaver.net
+ * Provider 1 (Primary for Stories): InstaSaver.io with Direct Stories API Interception
+ * Extracts ONLY genuine active 24-hour stories, completely avoiding timeline feed posts.
+ */
+async function extractViaInstaSaverPure(page, username) {
+  let storiesResponse = null;
+  const responseHandler = async (res) => {
+    const u = res.url();
+    if (u.includes('api/instagram/stories')) {
+      try {
+        const json = await res.json();
+        if (json?.success && Array.isArray(json?.data)) {
+          storiesResponse = json.data;
+        }
+      } catch {}
+    }
+  };
+
+  page.on('response', responseHandler);
+
+  try {
+    console.log(`[StoryExtractor] Trying provider: InstaSaver (Primary) for @${username}`);
+    await page.goto('https://instasaver.io/en/story-viewer/', { waitUntil: 'networkidle2', timeout: 15000 });
+
+    const inputSelector = 'input[type="text"], input[placeholder*="username"], input[placeholder*="profile"]';
+    await page.waitForSelector(inputSelector, { timeout: 8000 });
+    await page.type(inputSelector, username, { delay: 15 });
+
+    await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('button')];
+      const submitBtn = btns.find(
+        (b) =>
+          b.innerText &&
+          (b.innerText.toLowerCase().includes('view') ||
+            b.innerText.toLowerCase().includes('download') ||
+            b.innerText.toLowerCase().includes('search'))
+      );
+      if (submitBtn) submitBtn.click();
+    });
+
+    for (let sec = 0; sec < 12; sec++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (storiesResponse) break;
+    }
+  } catch (err) {
+    console.warn('[StoryExtractor] InstaSaver pure error:', err.message);
+  } finally {
+    page.off('response', responseHandler);
+  }
+
+  if (storiesResponse && Array.isArray(storiesResponse)) {
+    const stories = [];
+    for (const item of storiesResponse) {
+      const isVideo = item.media_type === 2 || (item.video_versions && item.video_versions.length > 0);
+      const rawUrl = isVideo ? item.video_versions?.[0]?.url : item.image_versions2?.candidates?.[0]?.url;
+      const rawThumb = item.image_versions2?.candidates?.[0]?.url || rawUrl;
+      const cleanUrl = unwrapDirectCdnUrl(rawUrl);
+      const cleanThumb = unwrapDirectCdnUrl(rawThumb);
+
+      if (cleanUrl) {
+        stories.push({
+          type: isVideo ? 'video' : 'image',
+          url: cleanUrl,
+          thumbnail: cleanThumb,
+        });
+      }
+    }
+    console.log(`[StoryExtractor] Provider InstaSaver returned ${stories.length} pure stories`);
+    return stories;
+  }
+
+  return [];
+}
+
+/**
+ * Provider 2 (Fallback 1): StorySaver.net
  * https://www.storysaver.net/en/
  */
 async function extractViaStorySaver(page, username) {
   try {
-    console.log(`[StoryExtractor] Trying provider: StorySaver (Primary) for @${username}`);
+    console.log(`[StoryExtractor] Trying provider: StorySaver for @${username}`);
     await page.goto('https://www.storysaver.net/en/', { waitUntil: 'networkidle2', timeout: 20000 });
 
-    const input = await page.$('#text_url, input[name="url"], input[type="text"]');
+    const input = await page.$('#text_url, input[name="text_username"], input[type="text"]');
     if (!input) return [];
     await input.type(username, { delay: 20 });
 
     await page.evaluate(() => {
-      const btn = document.querySelector('button.button, input[type="submit"], button[type="submit"]');
+      const btn = document.querySelector('#StoryButton, button.button, input[type="submit"], button[type="submit"]');
       if (btn) btn.click();
     });
 
@@ -171,8 +245,8 @@ async function extractViaStorySaver(page, username) {
 }
 
 /**
- * Provider 2 (Fallback 1): IGram.world
- * https://igram.world/en1/story-saver
+ * Provider 3 (Fallback 2): IGram.world with Story-Only Filtering
+ * Excludes feed posts (regular_photo/t51) and only includes genuine story items.
  */
 async function extractViaIGram(page, username) {
   try {
@@ -208,7 +282,9 @@ async function extractViaIGram(page, username) {
     const seen = new Set();
     for (const raw of items) {
       const clean = unwrapDirectCdnUrl(raw);
-      if (isInstagramCdn(clean) && !seen.has(clean)) {
+      // Strict story check: story videos (/o1/, ig_ephemeral, .mp4) or story tags
+      const isTrueStory = clean.includes('/o1/') || clean.includes('ig_ephemeral') || clean.includes('STORY') || clean.includes('.mp4');
+      if (isInstagramCdn(clean) && isTrueStory && !seen.has(clean)) {
         seen.add(clean);
         stories.push({
           type: clean.includes('.mp4') ? 'video' : 'image',
@@ -218,113 +294,10 @@ async function extractViaIGram(page, username) {
       }
     }
 
-    console.log(`[StoryExtractor] Provider IGram.world returned ${stories.length} items`);
+    console.log(`[StoryExtractor] Provider IGram.world returned ${stories.length} pure story items`);
     return stories;
   } catch (err) {
     console.warn('[StoryExtractor] IGram.world error:', err.message);
-    return [];
-  }
-}
-
-/**
- * Provider 3 (Fallback 2): InstaSaver.io
- * https://instasaver.io/en/story-viewer/
- */
-async function extractViaInstaSaver(page, username) {
-  try {
-    console.log(`[StoryExtractor] Trying fallback: InstaSaver.io for @${username}`);
-    const interceptedVideoUrls = [];
-    const responseHandler = async (res) => {
-      const u = res.url();
-      if (
-        u.includes('.mp4') ||
-        (u.includes('proxy?') && u.includes('.mp4')) ||
-        (u.includes('download=1') && u.includes('.mp4'))
-      ) {
-        interceptedVideoUrls.push(unwrapDirectCdnUrl(u));
-      }
-    };
-
-    page.on('response', responseHandler);
-    await page.goto('https://instasaver.io/en/story-viewer/', { waitUntil: 'networkidle2', timeout: 20000 });
-
-    const inputSelector = 'input[type="text"], input[name="url"], input[placeholder*="username"], input[placeholder*="Instagram"]';
-    await page.waitForSelector(inputSelector, { timeout: 8000 });
-    await page.type(inputSelector, username, { delay: 20 });
-
-    await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('button, a.btn')];
-      const submitBtn = btns.find(
-        (b) =>
-          b.innerText &&
-          (b.innerText.toLowerCase().includes('view') ||
-            b.innerText.toLowerCase().includes('download') ||
-            b.innerText.toLowerCase().includes('search'))
-      );
-      if (submitBtn) submitBtn.click();
-    });
-
-    let btnCount = 0;
-    for (let sec = 0; sec < 12; sec++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      btnCount = await page.evaluate(() => document.querySelectorAll('.grid button').length);
-      if (btnCount > 0) break;
-    }
-
-    if (btnCount > 0) {
-      for (let i = 0; i < btnCount; i++) {
-        await page.evaluate((idx) => {
-          const btns = document.querySelectorAll('.grid button');
-          if (btns[idx]) btns[idx].click();
-        }, i);
-        await new Promise((r) => setTimeout(r, 1600));
-      }
-    }
-
-    page.off('response', responseHandler);
-
-    const cardThumbnails = await page.evaluate(() => {
-      const thumbs = [];
-      document.querySelectorAll('.grid > div').forEach((card) => {
-        const img = card.querySelector('img');
-        if (img?.src) thumbs.push(img.src);
-      });
-      return thumbs;
-    });
-
-    const stories = [];
-    const seen = new Set();
-    for (let i = 0; i < interceptedVideoUrls.length; i++) {
-      const vidUrl = interceptedVideoUrls[i];
-      if (isInstagramCdn(vidUrl) && !seen.has(vidUrl)) {
-        seen.add(vidUrl);
-        const thumb = cardThumbnails[i] ? unwrapDirectCdnUrl(cardThumbnails[i]) : undefined;
-        stories.push({
-          type: 'video',
-          url: vidUrl,
-          thumbnail: thumb,
-        });
-      }
-    }
-
-    if (stories.length === 0) {
-      for (const thumb of cardThumbnails) {
-        const unwrapped = unwrapDirectCdnUrl(thumb);
-        if (isInstagramCdn(unwrapped) && !seen.has(unwrapped)) {
-          seen.add(unwrapped);
-          stories.push({
-            type: 'image',
-            url: unwrapped,
-            thumbnail: unwrapped,
-          });
-        }
-      }
-    }
-
-    console.log(`[StoryExtractor] Provider InstaSaver.io returned ${stories.length} items`);
-    return stories;
-  } catch (err) {
-    console.warn('[StoryExtractor] InstaSaver.io error:', err.message);
     return [];
   }
 }
@@ -342,7 +315,7 @@ async function extractViaInDown(page, username) {
     const input = await page.$('#link, input[name="link"]');
     if (!input) return [];
     await input.type(storyUrl, { delay: 20 });
-    await page.click('#get');
+    await page.click('button[type="submit"], #get');
 
     for (let sec = 0; sec < 12; sec++) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -384,11 +357,11 @@ async function extractViaInDown(page, username) {
 }
 
 /**
- * Main Story Extraction Dispatcher with Resilient Multi-Provider Fallback Cascade
+ * Main Story Extraction Dispatcher with Pure Story Filtering Cascade
  */
 export async function extractStoriesViaBrowser(usernameOrUrl) {
   const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-  console.log(`[StoryExtractor] Starting extraction for: ${usernameOrUrl}`);
+  console.log(`[StoryExtractor] Starting pure story extraction for: ${usernameOrUrl}`);
   console.log(`[StoryExtractor] Environment: ${isVercel ? 'vercel/serverless' : 'local'}`);
 
   let cleanInput = usernameOrUrl.trim();
@@ -431,17 +404,17 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
 
     let storiesList = [];
 
-    // 1. Primary: StorySaver.net
-    storiesList = await extractViaStorySaver(page, username);
+    // 1. Primary: InstaSaver.io with pure story API interception (returns ONLY active stories)
+    storiesList = await extractViaInstaSaverPure(page, username);
 
-    // 2. Fallback 1: IGram.world
+    // 2. Fallback 1: StorySaver.net
     if (storiesList.length === 0) {
-      storiesList = await extractViaIGram(page, username);
+      storiesList = await extractViaStorySaver(page, username);
     }
 
-    // 3. Fallback 2: InstaSaver.io
+    // 3. Fallback 2: IGram.world with story-only URL filtering
     if (storiesList.length === 0) {
-      storiesList = await extractViaInstaSaver(page, username);
+      storiesList = await extractViaIGram(page, username);
     }
 
     // 4. Fallback 3: InDown.io
@@ -460,7 +433,7 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
       }
     }
 
-    console.log(`[StoryExtractor] Final story count: ${storiesList.length} for @${username}`);
+    console.log(`[StoryExtractor] Final pure story count: ${storiesList.length} for @${username}`);
 
     return {
       success: true,
