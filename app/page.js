@@ -200,12 +200,10 @@ export default function Home() {
               <span className="glowing-green-dot"></span>
               Fast
             </span>
-            <span className="hero-pill-divider">•</span>
             <span className="hero-pill-item">
               <span className="glowing-green-dot"></span>
               Public content
             </span>
-            <span className="hero-pill-divider">•</span>
             <span className="hero-pill-item">
               <span className="glowing-green-dot"></span>
               No login
