@@ -32,3 +32,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Downloaded yt-dlp binary (generated during postinstall on Linux/Vercel)
+/bin/
+
+# Test scripts
+test-*.mjs
+test-*.js
+audit-live.js
+test-popular.js
+
+.vercel

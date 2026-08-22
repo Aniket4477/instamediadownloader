@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import puppeteer from 'puppeteer-core';
 import { extractStoriesViaBrowser, unwrapDirectCdnUrl, isInstagramCdn, getChromiumConfig } from './storyExtractor';
 
@@ -7,9 +9,28 @@ export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 /**
- * Cross-platform yt-dlp binary resolver (uses YTDLP_PATH env or system PATH 'yt-dlp')
+ * Cross-platform yt-dlp binary resolver.
+ * On Linux (Vercel serverless): uses the bundled ./bin/yt-dlp binary downloaded during postinstall.
+ * On Windows / macOS (local dev): falls back to system yt-dlp on PATH or YTDLP_PATH env.
  */
-const YTDLP_BIN = process.env.YTDLP_PATH || 'yt-dlp';
+function resolveYtdlpBin() {
+  if (process.env.YTDLP_PATH) return process.env.YTDLP_PATH;
+  if (process.platform === 'linux') {
+    // Vercel bundles files relative to process.cwd()
+    const bundledPath = path.join(process.cwd(), 'bin', 'yt-dlp');
+    if (fs.existsSync(bundledPath)) {
+      try {
+        fs.accessSync(bundledPath, fs.constants.X_OK);
+        return bundledPath;
+      } catch {
+        // Not executable — try to fix permissions
+        try { fs.chmodSync(bundledPath, 0o755); return bundledPath; } catch {}
+      }
+    }
+  }
+  return 'yt-dlp'; // fall back to system PATH
+}
+const YTDLP_BIN = resolveYtdlpBin();
 
 /**
  * Executes yt-dlp if available on system, returning JSON metadata safely
@@ -40,6 +61,155 @@ function runYtdlp(url, args = []) {
       resolve({ info: null, stderr: err.message });
     }
   });
+}
+
+/**
+ * Parse ALL Instagram CDN media URLs from a raw HTML string.
+ * Captures every image and video URL including full carousel items.
+ */
+function parseInstaCdnUrls(html) {
+  const items = [];
+  const seen = new Set();
+  // Decode HTML entities first
+  const decoded = html.replace(/&amp;/g, '&').replace(/&#038;/g, '&');
+
+  // Video URLs first (priority)
+  const videoRe = /https?:\/\/[a-z0-9.-]+\.cdninstagram\.com\/[^\s"'<>]+?\.mp4[^\s"'<>]*/gi;
+  let m;
+  while ((m = videoRe.exec(decoded)) !== null) {
+    const url = m[0];
+    if (!seen.has(url)) { seen.add(url); items.push({ type: 'video', url, thumbnail: url }); }
+  }
+
+  // Image URLs — scontent-*.cdninstagram.com or scontent-*.fbcdn.net
+  const imgRe = /https?:\/\/scontent[a-z0-9.-]*\.(?:cdninstagram|fbcdn)\.com\/[^\s"'<>]+?\.(?:jpg|jpeg|png)[^\s"'<>]*/gi;
+  while ((m = imgRe.exec(decoded)) !== null) {
+    const url = m[0];
+    if (!seen.has(url)) { seen.add(url); items.push({ type: 'image', url, thumbnail: url }); }
+  }
+
+  return items;
+}
+
+/**
+ * Serverless-friendly carousel extractor — pure HTTP fetch, NO Puppeteer.
+ * Tries multiple providers in sequence and returns ALL media items.
+ * This is the primary path on Vercel since yt-dlp is not available.
+ */
+async function fetchCarouselDirect(postUrl) {
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+  const providers = [
+    // Provider 1: cobalt.tools — open API with full carousel/picker support
+    // Returns status=picker with ALL carousel items in one response.
+    async () => {
+      const res = await fetch('https://api.cobalt.tools/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': UA,
+        },
+        body: JSON.stringify({ url: postUrl, videoQuality: 'max', filenameStyle: 'pretty' }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => null);
+      if (!data) return [];
+
+      // status=picker means carousel — all items returned at once
+      if (data.status === 'picker' && Array.isArray(data.picker) && data.picker.length > 0) {
+        return data.picker.map((item) => ({
+          type: item.type === 'video' ? 'video' : 'image',
+          url: item.url,
+          thumbnail: item.thumb || item.url,
+        }));
+      }
+      // status=tunnel/redirect means single video/image
+      if ((data.status === 'tunnel' || data.status === 'redirect') && data.url) {
+        const isVid = data.url.includes('.mp4') || (data.filename || '').endsWith('.mp4');
+        return [{ type: isVid ? 'video' : 'image', url: data.url, thumbnail: data.url }];
+      }
+      return [];
+    },
+
+    // Provider 2: snapinsta.app — returns full carousel HTML with all CDN links
+    async () => {
+      const body = new URLSearchParams({ url: postUrl, lang: 'en' });
+      const res = await fetch('https://snapinsta.app/action.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': UA,
+          'Referer': 'https://snapinsta.app/',
+          'Origin': 'https://snapinsta.app',
+          'Accept': '*/*',
+        },
+        body: body.toString(),
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!res.ok) return [];
+      return parseInstaCdnUrls(await res.text());
+    },
+
+    // Provider 3: snapsave.app — another HTML scraping alternative
+    async () => {
+      const body = new URLSearchParams({ url: postUrl, lang: 'en' });
+      const res = await fetch('https://snapsave.app/action.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': UA,
+          'Referer': 'https://snapsave.app/',
+          'Origin': 'https://snapsave.app',
+          'Accept': '*/*',
+        },
+        body: body.toString(),
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!res.ok) return [];
+      return parseInstaCdnUrls(await res.text());
+    },
+
+    // Provider 4: igram.world direct API (no browser — uses the same convert API)
+    async () => {
+      const res = await fetch('https://igram.world/api/ig/info', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': UA,
+          'Referer': 'https://igram.world/',
+          'Origin': 'https://igram.world',
+        },
+        body: new URLSearchParams({ url: postUrl }).toString(),
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => null);
+      if (!data) return [];
+      const rawItems = data?.data || data?.url || data?.medias || [];
+      return Array.isArray(rawItems)
+        ? rawItems.map((item) => ({
+            type: (item.type === 'mp4' || (item.url || '').includes('.mp4')) ? 'video' : 'image',
+            url: item.url || item.download_url || '',
+            thumbnail: item.thumbnail || item.url || '',
+          })).filter((i) => i.url)
+        : [];
+    },
+  ];
+
+  for (const provider of providers) {
+    try {
+      const items = await provider();
+      if (items.length > 0) {
+        console.log(`[CarouselDirect] Got ${items.length} item(s)`);
+        return items;
+      }
+    } catch (e) {
+      console.warn('[CarouselDirect] Provider failed:', e.message);
+    }
+  }
+  return [];
 }
 
 /**
@@ -76,14 +246,16 @@ async function extractPostViaBrowser(postUrl) {
       window.chrome = { runtime: {} };
     });
 
-    let convertApiData = null;
+    // Accumulate ALL carousel items (not overwrite) — igram.world may fire
+    // one api/convert call per carousel slide; overwriting loses previous items.
+    let convertApiData = [];
     page.on('response', async (res) => {
       const u = res.url();
       if (u.includes('api-wh.igram.world/api/convert')) {
         try {
           const json = await res.json();
           if (json?.url && Array.isArray(json.url)) {
-            convertApiData = json.url;
+            convertApiData.push(...json.url); // accumulate, not overwrite
           }
         } catch { /* ignore */ }
       }
@@ -330,7 +502,31 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE C: Serverless Browser Extractor (Reels, Posts & Carousels) ───────
+    // ── CASE C: Direct HTTP Carousel Extractor (no Puppeteer, works on Vercel) ─
+    // This runs BEFORE Puppeteer because yt-dlp is unavailable on Vercel and
+    // the browser carousel only returns 1 item at a time (slider UI).
+    const directMedia = await fetchCarouselDirect(url);
+    if (directMedia.length > 0) {
+      const isSingle = directMedia.length === 1;
+      const firstItem = directMedia[0];
+      return NextResponse.json({
+        success: true,
+        type: isSingle ? firstItem.type : 'carousel',
+        videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
+        imageUrl: firstItem.thumbnail || firstItem.url,
+        thumbnail: firstItem.thumbnail || firstItem.url,
+        title: 'Instagram Post',
+        author: '',
+        images: directMedia.map((m) => ({
+          url: m.url,
+          thumbnail: m.thumbnail || m.url,
+          type: m.type,
+        })),
+        count: directMedia.length,
+      });
+    }
+
+    // ── CASE D: Serverless Browser Extractor (Puppeteer fallback) ───────────────
     const browserMedia = await extractPostViaBrowser(url);
     if (browserMedia.length > 0) {
       const isSingle = browserMedia.length === 1;
@@ -353,7 +549,7 @@ export async function POST(request) {
       });
     }
 
-    // ── CASE D: Single Photo Fallback via Instagram oEmbed ───────────────────
+    // ── CASE E: Single Photo Fallback via Instagram oEmbed ───────────────────
     try {
       const oembed = await oembedFetch(url);
       if (oembed.thumbnail_url) {
