@@ -72,6 +72,11 @@ export default function Home() {
     }
   };
 
+  const handleClear = () => {
+    setUrl('');
+    if (inputRef.current) inputRef.current.focus();
+  };
+
   const handleFetch = async (e) => {
     if (e) e.preventDefault();
     if (!url.trim()) return;
@@ -250,9 +255,16 @@ export default function Home() {
                   required
                   className="url-input"
                 />
-                <button type="button" onClick={handlePaste} className="btn-paste-inside">
-                  Paste
-                </button>
+                <div className="input-action-buttons">
+                  {url && (
+                    <button type="button" onClick={handleClear} className="btn-inside-action btn-clear-inside" title="Clear input">
+                      Clear
+                    </button>
+                  )}
+                  <button type="button" onClick={handlePaste} className="btn-inside-action btn-paste-inside">
+                    Paste
+                  </button>
+                </div>
               </div>
 
               <button type="submit" disabled={loading} className="btn-download-hero" id="fetch-btn">
