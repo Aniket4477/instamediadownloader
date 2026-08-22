@@ -189,14 +189,14 @@ export default function Home() {
             <li><a href="#faq" className="nav-link">FAQ</a></li>
           </ul>
 
-          <button onClick={() => scrollToTop()} className="nav-cta-btn">
+          <button onClick={() => scrollToTop()} className="nav-cta-btn" suppressHydrationWarning>
             Start Downloading
           </button>
         </div>
       </header>
 
       {/* ── Main Layout Wrapper ── */}
-      <main className="main-wrap">
+      <main className="main-wrap" suppressHydrationWarning>
 
         {/* ── 1. Hero Section ── */}
         <section className="hero-section" id="hero">
@@ -232,6 +232,7 @@ export default function Home() {
                 aria-selected={activeTab === tab.id}
                 className={`tab-pill ${activeTab === tab.id ? 'tab-pill-active' : ''}`}
                 onClick={() => handleTabChange(tab.id)}
+                suppressHydrationWarning
               >
                 {tab.label}
               </button>
@@ -241,7 +242,7 @@ export default function Home() {
           {/* Hero Input Glass Card */}
           <div className="input-glass-card" id="download-input">
             <div className="input-card-title">Paste your Instagram link</div>
-            <form onSubmit={handleFetch}>
+            <form onSubmit={handleFetch} suppressHydrationWarning>
               <div className="input-row">
                 <span className="input-icon-left">
                   <LinkIcon />
@@ -254,20 +255,21 @@ export default function Home() {
                   placeholder={currentTab.placeholder}
                   required
                   className="url-input"
+                  suppressHydrationWarning
                 />
                 <div className="input-action-buttons">
                   {url && (
-                    <button type="button" onClick={handleClear} className="btn-inside-action btn-clear-inside" title="Clear input">
+                    <button type="button" onClick={handleClear} className="btn-inside-action btn-clear-inside" title="Clear input" suppressHydrationWarning>
                       Clear
                     </button>
                   )}
-                  <button type="button" onClick={handlePaste} className="btn-inside-action btn-paste-inside">
+                  <button type="button" onClick={handlePaste} className="btn-inside-action btn-paste-inside" suppressHydrationWarning>
                     Paste
                   </button>
                 </div>
               </div>
 
-              <button type="submit" disabled={loading} className="btn-download-hero" id="fetch-btn">
+              <button type="submit" disabled={loading} className="btn-download-hero" id="fetch-btn" suppressHydrationWarning>
                 {loading ? (
                   <>
                     <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
