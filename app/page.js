@@ -92,7 +92,16 @@ export default function Home() {
         body: JSON.stringify({ url: url.trim(), tab: activeTab }),
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.status === 504
+            ? 'Request timed out on the server. Please try again.'
+            : 'Unable to parse server response. Please try again.'
+        );
+      }
 
       if (!res.ok || !data.success) {
         throw new Error(data.message || data.error || 'Failed to fetch media');

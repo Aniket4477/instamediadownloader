@@ -264,6 +264,7 @@ async function extractPostViaBrowser(rawPostUrl) {
         input: '#link',
         submit: '#get',
         selector: 'a.btn-download, a[href*="cdninstagram"], a[href*="fetch"]',
+        isFormNav: true,
       },
       {
         name: 'sssinstagram.com',
@@ -271,13 +272,7 @@ async function extractPostViaBrowser(rawPostUrl) {
         input: '#main_input',
         submit: 'button[type="submit"]',
         selector: 'a.download_button, a[href*="get?"], a[href*="cdninstagram"]',
-      },
-      {
-        name: 'fastdl.app',
-        url: isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
-        input: '#search-form-input',
-        submit: 'button.search-form__button',
-        selector: 'a.button__download, a[href*="get?"], a[download]',
+        isFormNav: false,
       },
     ];
 
@@ -291,65 +286,68 @@ async function extractPostViaBrowser(rawPostUrl) {
         );
         await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
 
-        let convertApiUrls = [];
-        page.on('response', async (res) => {
-          const u = res.url();
-          if (u.includes('api/convert') || u.includes('api-wh')) {
-            try {
-              const json = await res.json();
-              if (json?.url && Array.isArray(json.url)) {
-                convertApiUrls.push(...json.url);
-              }
-            } catch { /* ignore */ }
+        // 🚀 Abort ads, media, fonts & analytics for 10x faster execution
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          const rt = req.resourceType();
+          const u = req.url();
+          if (
+            rt === 'image' ||
+            rt === 'font' ||
+            rt === 'stylesheet' ||
+            rt === 'media' ||
+            u.includes('google') ||
+            u.includes('doubleclick') ||
+            u.includes('analytics') ||
+            u.includes('pagead') ||
+            u.includes('facebook') ||
+            u.includes('amazon-adsystem')
+          ) {
+            req.abort();
+          } else {
+            req.continue();
           }
         });
 
-        await page.goto(prov.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.goto(prov.url, { waitUntil: 'domcontentloaded', timeout: 8000 });
         const input = await page.$(prov.input + ', input[name="url"], input[type="text"]');
         if (!input) {
           await page.close();
           continue;
         }
 
-        await input.type(postUrl, { delay: 10 });
-        await page.evaluate((submitSel) => {
-          const btn = document.querySelector(submitSel) || document.querySelector('button[type="submit"]');
-          if (btn) btn.click();
-        }, prov.submit);
+        await input.type(postUrl, { delay: 5 });
 
-        // Wait up to 15s for results to render
-        for (let i = 0; i < 15; i++) {
+        if (prov.isFormNav) {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 }).catch(() => {}),
+            page.evaluate((submitSel) => {
+              const btn = document.querySelector(submitSel) || document.querySelector('button[type="submit"]');
+              if (btn) btn.click();
+            }, prov.submit),
+          ]);
+        } else {
+          await page.evaluate((submitSel) => {
+            const btn = document.querySelector(submitSel) || document.querySelector('button[type="submit"]');
+            if (btn) btn.click();
+          }, prov.submit);
+        }
+
+        // Wait up to 6s for results to appear
+        for (let i = 0; i < 6; i++) {
           await new Promise((r) => setTimeout(r, 1000));
-          if (convertApiUrls.length > 0) break;
           try {
             const count = await page.evaluate((sel) => document.querySelectorAll(sel).length, prov.selector);
-            if (count > 0) {
-              // Wait 1 extra second for all carousel elements to finish populating
-              await new Promise((r) => setTimeout(r, 1000));
-              break;
-            }
+            if (count > 0) break;
           } catch {
             // Ignore context destruction during active navigation
           }
         }
 
-        const rawItems = [];
-
-        // Add api/convert response items
-        for (const entry of convertApiUrls) {
-          const clean = unwrapDirectCdnUrl(entry.url);
-          if (isInstagramCdn(clean)) {
-            rawItems.push({
-              type: entry.type === 'mp4' || clean.includes('.mp4') ? 'video' : 'image',
-              url: clean,
-              thumbnail: clean,
-            });
-          }
-        }
-
         // Add DOM elements (download buttons + rendered images)
+        let rawDom = [];
         try {
-          const domData = await page.evaluate(() => {
+          rawDom = await page.evaluate(() => {
             const links = [];
             document.querySelectorAll('a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], a[href*="get?"], a[download]').forEach((a) => {
               const h = a.href;
@@ -357,24 +355,22 @@ async function extractPostViaBrowser(rawPostUrl) {
                 links.push({ url: h, isVideo: h.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
               }
             });
-            document.querySelectorAll('img[src*="fetch"], img[src*="cdninstagram"], img[src*="get?"]').forEach((img) => {
-              if (img.src) links.push({ url: img.src, isVideo: false });
-            });
             return links;
           });
-
-          for (const item of domData) {
-            const clean = unwrapDirectCdnUrl(item.url);
-            if (isInstagramCdn(clean)) {
-              rawItems.push({
-                type: item.isVideo || clean.includes('.mp4') ? 'video' : 'image',
-                url: clean,
-                thumbnail: clean,
-              });
-            }
-          }
         } catch (domErr) {
           console.warn(`[PostExtractor] DOM evaluation warning on ${prov.name}:`, domErr.message);
+        }
+
+        const rawItems = [];
+        for (const item of rawDom) {
+          const clean = unwrapDirectCdnUrl(item.url);
+          if (isInstagramCdn(clean)) {
+            rawItems.push({
+              type: item.isVideo || clean.includes('.mp4') ? 'video' : 'image',
+              url: clean,
+              thumbnail: clean,
+            });
+          }
         }
 
         await page.close();
