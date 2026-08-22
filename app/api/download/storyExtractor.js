@@ -92,6 +92,8 @@ export function unwrapDirectCdnUrl(url) {
     if (
       url.includes('fastdl.app/get') ||
       url.includes('media.fastdl.app/get') ||
+      url.includes('sssinstagram.com/get') ||
+      url.includes('media.sssinstagram.com/get') ||
       url.includes('igram.world/get') ||
       url.includes('storiesig.info/get') ||
       url.includes('anonyig.com/get') ||
@@ -101,7 +103,7 @@ export function unwrapDirectCdnUrl(url) {
       const innerUri = parsed.searchParams.get('uri');
       if (innerUri && innerUri.startsWith('http')) return decodeURIComponent(innerUri);
     }
-    if (url.includes('indown.io/fetch')) {
+    if (url.includes('indown.io/fetch') || url.includes('d4.indown.io/fetch') || url.includes('d3.indown.io/fetch')) {
       const parsed = new URL(url);
       const innerUrl = parsed.searchParams.get('url');
       if (innerUrl && innerUrl.startsWith('http')) return decodeURIComponent(innerUrl);

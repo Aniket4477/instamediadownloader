@@ -213,17 +213,38 @@ async function fetchCarouselDirect(postUrl) {
 }
 
 /**
+ * Deduplicates CDN items while preserving all distinct photos/videos in a carousel
+ */
+function deduplicateMediaItems(items) {
+  const seenIds = new Set();
+  const uniqueList = [];
+
+  for (const item of items) {
+    const rawUrl = item.url;
+    if (!rawUrl) continue;
+    // Extract unique Instagram media ID if present
+    const idMatch = rawUrl.match(/\/([0-9]+_[0-9]+_[0-9]+)/) || rawUrl.match(/\/([0-9a-zA-Z_-]+\.(?:jpg|jpeg|png|mp4))/i);
+    const key = idMatch ? idMatch[1] : rawUrl.split('?')[0];
+
+    if (!seenIds.has(key)) {
+      seenIds.add(key);
+      uniqueList.push(item);
+    }
+  }
+
+  return uniqueList;
+}
+
+/**
  * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
  * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
  */
-async function extractPostViaBrowser(postUrl) {
+async function extractPostViaBrowser(rawPostUrl) {
   let browser;
   try {
+    // Strip tracking parameters (?igsi=..., ?utm_source=...)
+    const postUrl = rawPostUrl.split('?')[0].split('#')[0];
     const isReel = postUrl.includes('/reel/') || postUrl.includes('/tv/');
-    const providers = [
-      isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
-      isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
-    ];
 
     const config = await getChromiumConfig();
     browser = await puppeteer.launch({
@@ -232,21 +253,85 @@ async function extractPostViaBrowser(postUrl) {
       args: config.args,
     });
 
-    for (const providerUrl of providers) {
+    // ── Tier 1: Indown.io (Highest accuracy for multi-photo carousels and reels) ──
+    try {
+      const indownUrl = isReel ? 'https://indown.io/reels' : 'https://indown.io/photo';
+      console.log(`[PostExtractor] Tier 1: Navigating to ${indownUrl} for: ${postUrl}`);
+      const page = await browser.newPage();
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      );
+      await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
+
+      await page.goto(indownUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
+      const input = await page.$('#link, input[name="url"], input[type="text"]');
+      if (input) {
+        await input.type(postUrl, { delay: 10 });
+        await page.evaluate(() => {
+          const btn = document.querySelector('#get, button[type="submit"]');
+          if (btn) btn.click();
+        });
+
+        for (let i = 0; i < 8; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const count = await page.evaluate(() => {
+            return document.querySelectorAll('a[href*="cdninstagram"], a.btn-download, a[href*="fetch"], img[src*="fetch"], img[src*="cdninstagram"]').length;
+          });
+          if (count > 0) break;
+        }
+
+        const rawDom = await page.evaluate(() => {
+          const links = [];
+          document.querySelectorAll('a.btn-download, a[download], a[href*="cdninstagram"], a[href*="fetch"]').forEach((a) => {
+            const h = a.href;
+            if (h && !h.includes('indown.io/photo') && !h.includes('tiktok') && !h.includes('stories')) {
+              links.push({ url: h, isVideo: h.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
+            }
+          });
+          document.querySelectorAll('img[src*="fetch"], img[src*="cdninstagram"]').forEach((img) => {
+            if (img.src) links.push({ url: img.src, isVideo: false });
+          });
+          return links;
+        });
+
+        const indownItems = [];
+        for (const item of rawDom) {
+          const clean = unwrapDirectCdnUrl(item.url);
+          if (isInstagramCdn(clean)) {
+            indownItems.push({
+              type: item.isVideo || clean.includes('.mp4') ? 'video' : 'image',
+              url: clean,
+              thumbnail: clean,
+            });
+          }
+        }
+
+        const uniqueIndown = deduplicateMediaItems(indownItems);
+        await page.close();
+
+        if (uniqueIndown.length > 0) {
+          console.log(`[PostExtractor] Tier 1 (Indown) extracted ${uniqueIndown.length} items!`);
+          return uniqueIndown;
+        }
+      }
+    } catch (indownErr) {
+      console.warn('[PostExtractor] Tier 1 (Indown) warning:', indownErr.message);
+    }
+
+    // ── Tier 2 & 3: FastDL & IGram (API Interception) ──
+    const fallbackProviders = [
+      isReel ? 'https://fastdl.app/en/reels-downloader' : 'https://fastdl.app/en',
+      isReel ? 'https://igram.world/en1/reels-downloader' : 'https://igram.world/en1/',
+    ];
+
+    for (const providerUrl of fallbackProviders) {
       try {
-        console.log(`[PostExtractor] Navigating to ${providerUrl} for: ${postUrl}`);
+        console.log(`[PostExtractor] Fallback: Navigating to ${providerUrl} for: ${postUrl}`);
         const page = await browser.newPage();
         await page.setUserAgent(
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         );
-        await page.setExtraHTTPHeaders({
-          'accept-language': 'en-US,en;q=0.9',
-        });
-
-        await page.evaluateOnNewDocument(() => {
-          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-          window.chrome = { runtime: {} };
-        });
+        await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
 
         let convertApiData = [];
         page.on('response', async (res) => {
@@ -276,7 +361,6 @@ async function extractPostViaBrowser(postUrl) {
         });
         await input.press('Enter');
 
-        // Wait up to 8s for convert response or download buttons
         for (let sec = 0; sec < 8; sec++) {
           await new Promise((r) => setTimeout(r, 1000));
           if (convertApiData.length > 0) break;
@@ -287,51 +371,30 @@ async function extractPostViaBrowser(postUrl) {
         }
 
         const items = [];
-        const seen = new Set();
-
-        // Priority 1: Use accumulated api/convert data
         for (const entry of convertApiData) {
-          const rawUrl = entry.url;
-          const cleanUrl = unwrapDirectCdnUrl(rawUrl);
+          const cleanUrl = unwrapDirectCdnUrl(entry.url);
           const isVideo = entry.type === 'mp4' || cleanUrl.includes('.mp4');
-          if (cleanUrl && !seen.has(cleanUrl)) {
-            seen.add(cleanUrl);
+          if (cleanUrl) {
             items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
           }
         }
 
-        // Priority 2: DOM scan for download buttons and media
         if (items.length === 0) {
           const domMedia = await page.evaluate(() => {
             const results = [];
-            const seenInDom = new Set();
-
-            function add(url, isVideo) {
-              if (!url || !url.startsWith('http')) return;
-              const isCdn = url.includes('cdninstagram.com') || url.includes('fbcdn.net') || url.includes('get?');
-              if (!isCdn || seenInDom.has(url)) return;
-              seenInDom.add(url);
-              results.push({ href: url, isVideo });
-            }
-
-            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach(a => {
-              add(a.href, a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video'));
+            document.querySelectorAll('a.button__download, a[href*="get?"], a[download]').forEach((a) => {
+              results.push({ href: a.href, isVideo: a.href.includes('.mp4') || (a.innerText || '').toLowerCase().includes('video') });
             });
-            document.querySelectorAll('a[href*="cdninstagram"]').forEach(a => {
-              add(a.href, a.href.includes('.mp4'));
+            document.querySelectorAll('img[src*="cdninstagram"], img[src*="fbcdn"]').forEach((img) => {
+              results.push({ href: img.src, isVideo: false });
             });
-            document.querySelectorAll('img[src*="cdninstagram"], img[src*="fbcdn"]').forEach(img => {
-              add(img.src, false);
-            });
-
             return results;
           });
 
           for (const raw of domMedia) {
             const cleanUrl = unwrapDirectCdnUrl(raw.href);
             const isVideo = raw.isVideo || cleanUrl.includes('.mp4');
-            if (cleanUrl && !seen.has(cleanUrl)) {
-              seen.add(cleanUrl);
+            if (cleanUrl) {
               items.push({ type: isVideo ? 'video' : 'image', url: cleanUrl, thumbnail: cleanUrl });
             }
           }
@@ -339,12 +402,13 @@ async function extractPostViaBrowser(postUrl) {
 
         await page.close();
 
-        if (items.length > 0) {
-          console.log(`[PostExtractor] Successfully extracted ${items.length} items via ${providerUrl}`);
-          return items;
+        const uniqueFallback = deduplicateMediaItems(items);
+        if (uniqueFallback.length > 0) {
+          console.log(`[PostExtractor] Fallback extracted ${uniqueFallback.length} items via ${providerUrl}`);
+          return uniqueFallback;
         }
       } catch (provErr) {
-        console.warn(`[PostExtractor] Provider ${providerUrl} error:`, provErr.message);
+        console.warn(`[PostExtractor] Fallback ${providerUrl} error:`, provErr.message);
       }
     }
 
@@ -394,14 +458,17 @@ function validateInstagramUrl(url) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const url = (body?.url || '').trim();
+    const rawInput = (body?.url || '').trim();
 
-    if (!url) {
+    if (!rawInput) {
       return NextResponse.json({ error: 'Instagram URL or handle is required' }, { status: 400 });
     }
-    if (!validateInstagramUrl(url)) {
+    if (!validateInstagramUrl(rawInput)) {
       return NextResponse.json({ error: 'Invalid Instagram URL or handle' }, { status: 400 });
     }
+
+    // Strip query strings (?igsi=..., ?utm_source=...) and hashes for maximum scraper compatibility
+    const url = rawInput.startsWith('http') ? rawInput.split('?')[0].split('#')[0] : rawInput;
 
     const tab = (body?.tab || '').toLowerCase();
 
