@@ -390,6 +390,7 @@ async function extractPostViaBrowser(rawPostUrl) {
 
     return [];
   } catch (err) {
+    global.__lastExtractionError = err.message;
     console.error('[PostExtractor] Browser Extraction Error:', err.message);
     return [];
   } finally {
@@ -628,14 +629,19 @@ export async function POST(request) {
     }
 
     return NextResponse.json(
-      { error: 'Could not extract media from this link. Please verify the post is public.' },
+      {
+        error: 'Could not extract media from this link. Please verify the post is public.',
+        debug: {
+          lastError: global.__lastExtractionError || null,
+        }
+      },
       { status: 404 }
     );
 
   } catch (error) {
     console.error('[API Route Download Exception]:', error.message);
     return NextResponse.json(
-      { error: 'An unexpected error occurred while extracting media. Please try again later.' },
+      { error: 'An unexpected error occurred while extracting media. Please try again later.', debug: error.message },
       { status: 500 }
     );
   }
