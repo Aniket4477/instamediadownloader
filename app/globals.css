@@ -160,21 +160,26 @@ body {
 .nav-cta-btn {
   background: var(--primary-gradient);
   color: #fff;
+  border: none;
+  outline: none;
+  font-family: inherit;
   text-decoration: none;
   font-size: 0.82rem;
   font-weight: 700;
-  padding: 0.5rem 1.15rem;
+  padding: 0.5rem 1.25rem;
   border-radius: var(--radius-pill);
+  cursor: pointer;
   transition: all 0.25s ease;
   box-shadow: 0 0 16px var(--accent-glow);
   display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 .nav-cta-btn:hover {
   background: var(--primary-gradient-hover);
   transform: translateY(-1px);
-  box-shadow: 0 0 24px rgba(225, 29, 116, 0.45);
+  box-shadow: 0 0 24px rgba(225, 29, 116, 0.55);
 }
 
 /* ── Main Layout Wrapper ─────────────────────────────────── */
