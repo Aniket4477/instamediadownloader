@@ -47,6 +47,7 @@ export default function Home() {
   const [dlAll, setDlAll] = useState(false);
   const [copied, setCopied] = useState(false);
   const [openFaq, setOpenFaq] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const inputRef = useRef(null);
   const resultRef = useRef(null);
@@ -195,17 +196,71 @@ export default function Home() {
             <span className="nav-brand-text">InstaDown</span>
           </a>
 
-          <ul className="nav-links">
+          {/* Desktop Nav Links */}
+          <ul className="nav-links desktop-only">
             <li><a href="#hero" className="nav-link">Home</a></li>
             <li><a href="#how-it-works" className="nav-link">How it works</a></li>
             <li><a href="#supported-media" className="nav-link">Supported media</a></li>
             <li><a href="#faq" className="nav-link">FAQ</a></li>
           </ul>
 
-          <button onClick={() => scrollToTop()} className="nav-cta-btn" suppressHydrationWarning>
-            Start Downloading
-          </button>
+          <div className="nav-actions">
+            <button onClick={() => scrollToTop()} className="nav-cta-btn" suppressHydrationWarning>
+              Start Downloading
+            </button>
+
+            {/* Mobile Hamburger Toggle Button */}
+            <button
+              type="button"
+              className={`mobile-hamburger-btn ${mobileMenuOpen ? 'active' : ''}`}
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Toggle navigation menu"
+              aria-expanded={mobileMenuOpen}
+              suppressHydrationWarning
+            >
+              {mobileMenuOpen ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6"></line>
+                  <line x1="3" y1="12" x2="21" y2="12"></line>
+                  <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Dropdown Drawer */}
+        {mobileMenuOpen && (
+          <nav className="mobile-nav-drawer" role="navigation" aria-label="Mobile Navigation">
+            <a href="#hero" className="mobile-nav-link" onClick={() => setMobileMenuOpen(false)}>
+              Home
+            </a>
+            <a href="#how-it-works" className="mobile-nav-link" onClick={() => setMobileMenuOpen(false)}>
+              How it works
+            </a>
+            <a href="#supported-media" className="mobile-nav-link" onClick={() => setMobileMenuOpen(false)}>
+              Supported media
+            </a>
+            <a href="#faq" className="mobile-nav-link" onClick={() => setMobileMenuOpen(false)}>
+              FAQ
+            </a>
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                scrollToTop();
+              }}
+              className="btn-download-hero mobile-drawer-cta"
+              suppressHydrationWarning
+            >
+              Start Downloading
+            </button>
+          </nav>
+        )}
       </header>
 
       {/* ── Main Layout Wrapper ── */}
@@ -229,11 +284,11 @@ export default function Home() {
           </div>
 
           <h1 className="hero-title">
-            Download Instagram<br />media effortlessly.
+            Download Instagram <br />media effortlessly.
           </h1>
 
           <p className="hero-subtitle">
-            Paste a public Instagram link and get your video, photo, Reel, or Story in<br />seconds.
+            Paste a public Instagram link and get your video, photo, Reel, or Story in <br />seconds.
           </p>
 
           {/* Filter Tabs Pill */}
