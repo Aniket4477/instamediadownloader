@@ -399,3 +399,201 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
     }
   }
 }
+
+
+// ============================================================================
+// Multi-Tier Fast Story Extractors (SocialCrawl + GramScraper REST APIs)
+// Primary fast APIs that avoid slow, fragile headless browsers on Vercel
+// ============================================================================
+const SOCIALCRAWL_KEY =
+  process.env.SOCIALCRAWL_KEY ||
+  'sc_aa3M7HoILIx_yyZvj1Uflh_tqsiGxtuE7-uCCljw-5U';
+
+const GRAMSCRAPER_KEY =
+  process.env.GRAMSCRAPER_KEY ||
+  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
+
+export function parseStoryInput(rawInput) {
+  let cleanInput = (rawInput || '').trim();
+  let username = '';
+  let targetStoryId = null;
+
+  if (cleanInput.includes('instagram.com/stories/')) {
+    const match = cleanInput.match(/instagram\.com\/stories\/([^/?#]+)(?:\/(\d+))?/i);
+    if (match) {
+      username = match[1];
+      if (match[2]) targetStoryId = match[2];
+    }
+  } else if (cleanInput.includes('instagram.com/')) {
+    const match = cleanInput.match(/instagram\.com\/([^/?#]+)/i);
+    if (match && !['p', 'reel', 'reels', 'tv', 'explore', 'stories'].includes(match[1].toLowerCase())) {
+      username = match[1];
+    }
+  } else {
+    username = cleanInput.replace(/^@/, '').split('?')[0].split('/')[0];
+  }
+
+  return { username: username.toLowerCase().trim(), targetStoryId };
+}
+
+/**
+ * Tier 1: SocialCrawl API (Fastest ~500ms, pure REST, official Instagram CDN URLs)
+ */
+async function extractStoriesViaSocialCrawl(username) {
+  try {
+    const endpoint = `https://www.socialcrawl.dev/v1/instagram/stories?username=${encodeURIComponent(username)}`;
+    const res = await fetch(endpoint, {
+      headers: { 'x-api-key': SOCIALCRAWL_KEY, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.status === 404) {
+      return { success: true, username, stories: [], empty: true };
+    }
+
+    if (!res.ok) {
+      console.warn(`[SocialCrawl Stories] HTTP ${res.status} for @${username}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (!data.success || !data.data) return null;
+
+    const items = data.data.items || [];
+    if (items.length === 0) {
+      return { success: true, username, stories: [], empty: true };
+    }
+
+    const stories = items
+      .map((item, idx) => {
+        const p = item.post || {};
+        const content = p.content || {};
+        const ext = p.ext || {};
+        let mediaUrl = content.media_urls;
+        if (Array.isArray(mediaUrl)) mediaUrl = mediaUrl[0];
+
+        const isVideo = ext.media_type === 'video' || (mediaUrl && mediaUrl.includes('.mp4'));
+        return {
+          id: p.id || String(idx),
+          url: mediaUrl,
+          thumbnail: content.thumbnail_url || mediaUrl,
+          type: isVideo ? 'video' : 'image',
+        };
+      })
+      .filter((s) => s.url);
+
+    return { success: true, username, stories, empty: stories.length === 0 };
+  } catch (err) {
+    console.warn('[SocialCrawl Stories] Error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Tier 2: GramScraper API (High Reliability ~1-2s, pure REST, direct CDN URLs)
+ */
+async function extractStoriesViaGramScraper(username) {
+  try {
+    const endpoint = `https://gramscraper.com/api/instagram/v2/user/stories/by/username?username=${encodeURIComponent(username)}`;
+    const res = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${GRAMSCRAPER_KEY}` },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[GramScraper Stories] HTTP ${res.status} for @${username}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data.status !== 'ok') return null;
+
+    if (!data.reel || !Array.isArray(data.reel.items) || data.reel.items.length === 0) {
+      return { success: true, username, stories: [], empty: true };
+    }
+
+    const stories = data.reel.items
+      .map((item, idx) => {
+        const isVideo = item.media_type === 2 || (item.video_versions && item.video_versions.length > 0);
+        let mediaUrl = null;
+        let thumbUrl = null;
+
+        if (isVideo && item.video_versions?.length > 0) {
+          mediaUrl = item.video_versions[0].url;
+          thumbUrl = item.image_versions2?.candidates?.[0]?.url || mediaUrl;
+        } else if (item.image_versions2?.candidates?.length > 0) {
+          mediaUrl = item.image_versions2.candidates[0].url;
+          thumbUrl = mediaUrl;
+        }
+
+        return {
+          id: item.id || String(idx),
+          url: mediaUrl,
+          thumbnail: thumbUrl || mediaUrl,
+          type: isVideo ? 'video' : 'image',
+        };
+      })
+      .filter((s) => s.url);
+
+    return { success: true, username, stories, empty: stories.length === 0 };
+  } catch (err) {
+    console.warn('[GramScraper Stories] Error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Unified Story Extractor:
+ * 1. SocialCrawl API (Fastest ~500ms)
+ * 2. GramScraper API (High-reliability backup)
+ * 3. Browser Scraper (Last-resort fallback)
+ */
+export async function extractStories(usernameOrUrl) {
+  const { username, targetStoryId } = parseStoryInput(usernameOrUrl);
+
+  if (!username) {
+    return { success: false, error: 'INVALID_USERNAME', message: 'Could not determine Instagram username' };
+  }
+
+  console.log(`[StoryExtractor] Extracting stories for @${username} (target: ${targetStoryId || 'all'})`);
+
+  // Tier 1: SocialCrawl
+  let result = await extractStoriesViaSocialCrawl(username);
+
+  // If SocialCrawl returned an explicit empty (0 active stories), return it
+  if (result && result.empty) {
+    return result;
+  }
+
+  // Tier 2: GramScraper if Tier 1 failed or returned null
+  if (!result || !result.success || result.stories?.length === 0) {
+    console.log(`[StoryExtractor] Trying GramScraper for @${username}...`);
+    const gsResult = await extractStoriesViaGramScraper(username);
+    if (gsResult) {
+      result = gsResult;
+    }
+  }
+
+  // If active stories were found, prioritize targetStoryId if requested
+  if (result && result.stories?.length > 0) {
+    if (targetStoryId && result.stories.length > 1) {
+      const matchIdx = result.stories.findIndex(
+        (s) => s.id && (s.id.includes(targetStoryId) || targetStoryId.includes(s.id))
+      );
+      if (matchIdx > 0) {
+        const matched = result.stories.splice(matchIdx, 1)[0];
+        result.stories.unshift(matched);
+      }
+    }
+    return result;
+  }
+
+  // If both APIs reported empty: account has no active stories
+  if (result && result.empty) {
+    return result;
+  }
+
+  // Tier 3: Browser Fallback
+  console.log(`[StoryExtractor] Falling back to browser extraction for @${username}...`);
+  return await extractStoriesViaBrowser(usernameOrUrl);
+}

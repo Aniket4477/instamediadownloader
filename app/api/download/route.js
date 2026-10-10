@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
-import { extractStoriesViaBrowser, unwrapDirectCdnUrl, isInstagramCdn, getChromiumConfig } from './storyExtractor';
+import { extractStories, extractStoriesViaBrowser, unwrapDirectCdnUrl, isInstagramCdn, getChromiumConfig } from './storyExtractor';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -565,13 +565,19 @@ export async function POST(request) {
 
     // ── CASE A: Instagram Story Link or Username ──────────────────────────────
     if (isStory) {
-      const storyRes = await extractStoriesViaBrowser(url);
+      const storyRes = await extractStories(url);
 
       if (storyRes.success && storyRes.stories?.length > 0) {
+        const isSingle = storyRes.stories.length === 1;
+        const firstItem = storyRes.stories[0];
+
         return NextResponse.json({
           success: true,
           type: 'story',
           username: storyRes.username,
+          videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
+          imageUrl: isSingle && firstItem.type === 'image' ? firstItem.url : (firstItem.thumbnail || null),
+          thumbnail: firstItem.thumbnail || firstItem.url,
           count: storyRes.stories.length,
           images: storyRes.stories.map((s) => ({
             url: s.url,
@@ -581,7 +587,7 @@ export async function POST(request) {
         });
       }
 
-      if (storyRes.success && storyRes.stories?.length === 0) {
+      if (storyRes.empty || (storyRes.success && storyRes.stories?.length === 0)) {
         return NextResponse.json(
           { error: 'No active stories found for this public account (stories expire in 24 hours).' },
           { status: 404 }
