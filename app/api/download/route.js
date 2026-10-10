@@ -243,6 +243,103 @@ function deduplicateMediaItems(items) {
  * Universal Serverless Browser Extractor for Instagram Posts, Carousels, and Reels
  * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
  */
+// ============================================================================
+// GramScraper API Extractor (Primary - Fast, no Puppeteer, direct CDN URLs)
+// API Key: GramScraper (gs_... token). Costs 1 credit per post lookup.
+// ============================================================================
+const GRAMSCRAPER_KEY =
+  process.env.GRAMSCRAPER_KEY ||
+  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
+const GRAMSCRAPER_BASE = 'https://gramscraper.com/api/instagram';
+
+/**
+ * Extract carousel/post/reel media via GramScraper REST API.
+ * Returns array of { url, thumbnail, type, title, author } items, or [] on failure.
+ * Fast (~1-2s), pure fetch, no browser required, directly returns Instagram CDN URLs.
+ */
+async function extractViaGramScraper(rawPostUrl) {
+  try {
+    const postUrl = rawPostUrl.split('?')[0].split('#')[0];
+    const endpoint = `${GRAMSCRAPER_BASE}/v2/media/info/by/url?url=${encodeURIComponent(postUrl)}`;
+
+    const res = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${GRAMSCRAPER_KEY}` },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[GramScraper] HTTP ${res.status} for ${postUrl}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const post = data.media_or_ad || (Array.isArray(data.items) ? data.items[0] : null);
+    if (!post) return [];
+
+    const caption = post?.caption?.text || 'Instagram Post';
+    const author = post?.user?.username || post?.user?.full_name || '';
+
+    const items = [];
+
+    // Helper to pick best resolution candidate
+    const bestImage = (candidates) => {
+      if (!Array.isArray(candidates) || candidates.length === 0) return null;
+      return candidates.reduce((best, c) => (!best || c.width > best.width ? c : best), null);
+    };
+
+    const processItem = (item) => {
+      if (!item) return;
+
+      // Video (Reel or video carousel slide)
+      if (item.video_versions && item.video_versions.length > 0) {
+        const best = item.video_versions.reduce((b, v) => (!b || v.width > b.width ? v : b), null);
+        if (best?.url) {
+          const thumb = bestImage(item.image_versions2?.candidates)?.url || best.url;
+          items.push({
+            url: best.url,
+            thumbnail: thumb,
+            type: 'video',
+            title: caption,
+            author: author,
+          });
+          return;
+        }
+      }
+
+      // Image (Carousel slide photo or single photo)
+      if (item.image_versions2?.candidates && item.image_versions2.candidates.length > 0) {
+        const best = bestImage(item.image_versions2.candidates);
+        if (best?.url) {
+          items.push({
+            url: best.url,
+            thumbnail: best.url,
+            type: 'image',
+            title: caption,
+            author: author,
+          });
+          return;
+        }
+      }
+    };
+
+    // Check for carousel (multiple slides in carousel_media)
+    if (Array.isArray(post.carousel_media) && post.carousel_media.length > 0) {
+      for (const carouselItem of post.carousel_media) {
+        processItem(carouselItem);
+      }
+    } else {
+      // Single post or reel
+      processItem(post);
+    }
+
+    console.log(`[GramScraper] Successfully extracted ${items.length} items for ${postUrl}`);
+    return items;
+  } catch (err) {
+    console.warn('[GramScraper] Error:', err.message);
+    return [];
+  }
+}
+
 async function extractPostViaBrowser(rawPostUrl) {
   let browser;
   try {
@@ -504,8 +601,9 @@ export async function POST(request) {
       );
     }
 
-    // ── CASE B: Multi-Tier Browser Extractor (Primary for Carousels, Photos, Reels) ──
-    const browserMedia = await extractPostViaBrowser(url);
+    // CASE B: GramScraper API (fast REST, no browser) ? Browser fallback
+    const gsMedia = await extractViaGramScraper(url);
+    const browserMedia = (gsMedia && gsMedia.length > 0) ? gsMedia : await extractPostViaBrowser(url);
     if (browserMedia && browserMedia.length > 0) {
       const isSingle = browserMedia.length === 1;
       const firstItem = browserMedia[0];
@@ -516,8 +614,8 @@ export async function POST(request) {
         videoUrl: isSingle && firstItem.type === 'video' ? firstItem.url : null,
         imageUrl: firstItem.thumbnail || firstItem.url,
         thumbnail: firstItem.thumbnail || firstItem.url,
-        title: 'Instagram Post',
-        author: '',
+        title: firstItem.title || 'Instagram Post',
+        author: firstItem.author || '',
         images: browserMedia.map((m) => ({
           url: m.url,
           thumbnail: m.thumbnail || m.url,
