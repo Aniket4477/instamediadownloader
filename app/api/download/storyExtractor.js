@@ -405,13 +405,9 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
 // Multi-Tier Fast Story Extractors (SocialCrawl + GramScraper REST APIs)
 // Primary fast APIs that avoid slow, fragile headless browsers on Vercel
 // ============================================================================
-const SOCIALCRAWL_KEY =
-  process.env.SOCIALCRAWL_KEY ||
-  'sc_aa3M7HoILIx_yyZvj1Uflh_tqsiGxtuE7-uCCljw-5U';
+const SOCIALCRAWL_KEY = process.env.SOCIALCRAWL_KEY || '';
 
-const GRAMSCRAPER_KEY =
-  process.env.GRAMSCRAPER_KEY ||
-  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
+const GRAMSCRAPER_KEY = process.env.GRAMSCRAPER_KEY || '';
 
 export function parseStoryInput(rawInput) {
   let cleanInput = (rawInput || '').trim();
@@ -440,6 +436,9 @@ export function parseStoryInput(rawInput) {
  * Tier 1: SocialCrawl API (Fastest ~500ms, pure REST, official Instagram CDN URLs)
  */
 async function extractStoriesViaSocialCrawl(username) {
+  if (!SOCIALCRAWL_KEY) {
+    return null;
+  }
   try {
     const endpoint = `https://www.socialcrawl.dev/v1/instagram/stories?username=${encodeURIComponent(username)}`;
     const res = await fetch(endpoint, {
@@ -493,6 +492,9 @@ async function extractStoriesViaSocialCrawl(username) {
  * Tier 2: GramScraper API (High Reliability ~1-2s, pure REST, direct CDN URLs)
  */
 async function extractStoriesViaGramScraper(username) {
+  if (!GRAMSCRAPER_KEY) {
+    return null;
+  }
   try {
     const endpoint = `https://gramscraper.com/api/instagram/v2/user/stories/by/username?username=${encodeURIComponent(username)}`;
     const res = await fetch(endpoint, {

@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import { extractStories, extractStoriesViaBrowser, unwrapDirectCdnUrl, isInstagramCdn, getChromiumConfig } from './storyExtractor';
+import { validateInstagramInput, getCorsHeaders } from '../lib/security';
+import { getClientIp, checkRateLimit, rateLimitExceededResponse } from '../lib/rateLimit';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -247,9 +249,7 @@ function deduplicateMediaItems(items) {
 // GramScraper API Extractor (Primary - Fast, no Puppeteer, direct CDN URLs)
 // API Key: GramScraper (gs_... token). Costs 1 credit per post lookup.
 // ============================================================================
-const GRAMSCRAPER_KEY =
-  process.env.GRAMSCRAPER_KEY ||
-  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
+const GRAMSCRAPER_KEY = process.env.GRAMSCRAPER_KEY || '';
 const GRAMSCRAPER_BASE = 'https://gramscraper.com/api/instagram';
 
 /**
@@ -258,6 +258,7 @@ const GRAMSCRAPER_BASE = 'https://gramscraper.com/api/instagram';
  * Fast (~1-2s), pure fetch, no browser required, directly returns Instagram CDN URLs.
  */
 async function extractViaGramScraper(rawPostUrl) {
+  if (!GRAMSCRAPER_KEY) return [];
   try {
     const postUrl = rawPostUrl.split('?')[0].split('#')[0];
     const endpoint = `${GRAMSCRAPER_BASE}/v2/media/info/by/url?url=${encodeURIComponent(postUrl)}`;
@@ -517,26 +518,56 @@ async function oembedFetch(shortcodeOrUrl) {
   return res.json();
 }
 
-function validateInstagramUrl(url) {
-  try {
-    if (url.startsWith('@') || /^[a-zA-Z0-9._]{1,30}$/.test(url)) return true;
-    const parsed = new URL(url);
-    return parsed.hostname.includes('instagram.com');
-  } catch {
-    return false;
-  }
+
+
+
+/**
+ * Handle CORS preflight
+ */
+export async function OPTIONS(request) {
+  const corsHeaders = getCorsHeaders(request);
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
 }
 
 export async function POST(request) {
-  try {
-    const body = await request.json();
-    const rawInput = (body?.url || '').trim();
+  const corsHeaders = getCorsHeaders(request);
 
-    if (!rawInput) {
-      return NextResponse.json({ error: 'Instagram URL or handle is required' }, { status: 400 });
+  try {
+    // 1. Rate Limiting: 30 requests per minute per IP
+    const clientIp = getClientIp(request);
+    const rateInfo = checkRateLimit(`download:${clientIp}`, 30, 60000);
+    if (!rateInfo.success) {
+      return rateLimitExceededResponse(rateInfo);
     }
-    if (!validateInstagramUrl(rawInput)) {
-      return NextResponse.json({ error: 'Invalid Instagram URL or handle' }, { status: 400 });
+
+    // 2. Safe JSON Body Parsing & Validation
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid JSON request payload' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json(
+        { error: 'Request body must be a valid JSON object' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const rawInput = typeof body.url === 'string' ? body.url.trim() : '';
+    const validation = validateInstagramInput(rawInput);
+    if (!validation.valid) {
+      return NextResponse.json(
+        { error: validation.error },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
     // Strip query strings (?igsi=..., ?utm_source=...) and hashes for maximum scraper compatibility
@@ -733,18 +764,15 @@ export async function POST(request) {
     return NextResponse.json(
       {
         error: 'Could not extract media from this link. Please verify the post is public.',
-        debug: {
-          lastError: global.__lastExtractionError || null,
-        }
       },
-      { status: 404 }
+      { status: 404, headers: corsHeaders }
     );
 
   } catch (error) {
     console.error('[API Route Download Exception]:', error.message);
     return NextResponse.json(
-      { error: 'An unexpected error occurred while extracting media. Please try again later.', debug: error.message },
-      { status: 500 }
+      { error: 'An unexpected error occurred while extracting media. Please try again later.' },
+      { status: 500, headers: corsHeaders }
     );
   }
 }

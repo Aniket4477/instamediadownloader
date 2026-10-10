@@ -126,13 +126,17 @@ export default function Home() {
   };
 
   const previewUrl = (src) => {
-    if (!src) return '';
-    return `/api/proxy?url=${encodeURIComponent(src)}`;
+    if (!src || typeof src !== 'string') return '';
+    const clean = src.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) return '';
+    return `/api/proxy?url=${encodeURIComponent(clean)}`;
   };
 
   const downloadUrl = (src) => {
-    if (!src) return '';
-    return `/api/proxy?url=${encodeURIComponent(src)}&dl=1`;
+    if (!src || typeof src !== 'string') return '';
+    const clean = src.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) return '';
+    return `/api/proxy?url=${encodeURIComponent(clean)}&dl=1`;
   };
 
   const downloadAll = async (items) => {
@@ -675,7 +679,7 @@ export default function Home() {
         <div className="footer-container">
           <div className="footer-left">
             <div>Email: <a href="mailto:aniketpat@gmail.com">aniketpat@gmail.com</a></div>
-            <div>GitHub: <a href="https://github.com/Aniket4477/instamediadownloader" target="_blank" rel="noreferrer">https://github.com/Aniket4477/instamediadownloader</a></div>
+            <div>GitHub: <a href="https://github.com/Aniket4477/instamediadownloader" target="_blank" rel="noopener noreferrer">https://github.com/Aniket4477/instamediadownloader</a></div>
             <div style={{ marginTop: '0.4rem' }}>Thanks for checking out! Crafted for speed.</div>
           </div>
 

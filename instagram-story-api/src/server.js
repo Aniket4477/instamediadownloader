@@ -12,7 +12,40 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ── 1. Security & Core Middleware ──────────────────────────────────────────
-app.use(cors({ origin: '*' }));
+// Secure CORS allowlist (disallowing wildcard * in production)
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://instamediadownloader.vercel.app')
+  .split(',')
+  .map((o) => o.trim().toLowerCase())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // Same-origin or non-browser / server-to-server
+    const originLower = origin.toLowerCase();
+    if (
+      ALLOWED_ORIGINS.includes(originLower) ||
+      (process.env.NODE_ENV !== 'production' &&
+        (originLower.startsWith('http://localhost:') || originLower.startsWith('http://127.0.0.1:')))
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+  credentials: false,
+};
+
+app.use(cors(corsOptions));
+
+// Security Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 app.use(express.json({ limit: config.security.maxPayloadSizeBytes }));
 app.use(express.urlencoded({ extended: true, limit: config.security.maxPayloadSizeBytes }));
 app.use(rateLimiter);
