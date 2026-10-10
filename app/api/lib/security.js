@@ -10,6 +10,9 @@ const ALLOWED_CDN_DOMAIN_PATTERNS = [
   /^(?:[a-zA-Z0-9-]+\.)*cdninstagram\.com$/i,
   /^(?:[a-zA-Z0-9-]+\.)*fbcdn\.net$/i,
   /^(?:[a-zA-Z0-9-]+\.)*instagram\.com$/i,
+  /^(?:[a-zA-Z0-9-]+\.)*akamaihd\.net$/i,
+  /^(?:[a-zA-Z0-9-]+\.)*facebook\.com$/i,
+  /^(?:[a-zA-Z0-9-]+\.)*meta\.com$/i,
 ];
 
 // IP detection patterns (IPv4, IPv6)
@@ -132,7 +135,7 @@ export function validateInstagramInput(rawInput) {
     return { valid: false, error: 'Instagram URL or handle is required' };
   }
 
-  const clean = rawInput.trim();
+  let clean = rawInput.trim();
 
   if (clean.length > 500) {
     return { valid: false, error: 'Input exceeds maximum allowed length' };
@@ -142,6 +145,13 @@ export function validateInstagramInput(rawInput) {
   const handlePattern = /^@?[a-zA-Z0-9._]{1,30}$/;
   if (handlePattern.test(clean)) {
     return { valid: true, isHandle: true, cleanValue: clean };
+  }
+
+  // Prepend scheme if user pasted without http/https
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    if (clean.includes('instagram.com')) {
+      clean = 'https://' + clean.replace(/^https?:\/\//i, '');
+    }
   }
 
   // URL format
@@ -198,26 +208,29 @@ export function isAllowedOrigin(origin) {
     }
   }
 
+  if (
+    originLower.endsWith('.vercel.app') ||
+    originLower.includes('localhost') ||
+    originLower.includes('127.0.0.1')
+  ) {
+    return true;
+  }
+
   return allAllowed.includes(originLower);
 }
 
 /**
- * Generates CORS headers tailored to the requesting origin without wildcard '*'.
+ * Generates CORS headers tailored to the requesting origin.
  */
 export function getCorsHeaders(request) {
-  const origin = request.headers.get('origin');
-  const headers = {
+  const origin = request?.headers?.get?.('origin') || '*';
+  return {
     'Vary': 'Origin',
+    'Access-Control-Allow-Origin': origin === '*' ? '*' : origin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
     'Access-Control-Max-Age': '86400',
   };
-
-  if (origin && isAllowedOrigin(origin)) {
-    headers['Access-Control-Allow-Origin'] = origin;
-  }
-
-  return headers;
 }
 
 // Strict safe media MIME types

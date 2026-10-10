@@ -405,9 +405,13 @@ export async function extractStoriesViaBrowser(usernameOrUrl) {
 // Multi-Tier Fast Story Extractors (SocialCrawl + GramScraper REST APIs)
 // Primary fast APIs that avoid slow, fragile headless browsers on Vercel
 // ============================================================================
-const SOCIALCRAWL_KEY = process.env.SOCIALCRAWL_KEY || '';
+const SOCIALCRAWL_KEY =
+  process.env.SOCIALCRAWL_KEY ||
+  'sc_aa3M7HoILIx_yyZvj1Uflh_tqsiGxtuE7-uCCljw-5U';
 
-const GRAMSCRAPER_KEY = process.env.GRAMSCRAPER_KEY || '';
+const GRAMSCRAPER_KEY =
+  process.env.GRAMSCRAPER_KEY ||
+  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
 
 export function parseStoryInput(rawInput) {
   let cleanInput = (rawInput || '').trim();

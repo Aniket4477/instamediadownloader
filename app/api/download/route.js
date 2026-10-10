@@ -249,7 +249,9 @@ function deduplicateMediaItems(items) {
 // GramScraper API Extractor (Primary - Fast, no Puppeteer, direct CDN URLs)
 // API Key: GramScraper (gs_... token). Costs 1 credit per post lookup.
 // ============================================================================
-const GRAMSCRAPER_KEY = process.env.GRAMSCRAPER_KEY || '';
+const GRAMSCRAPER_KEY =
+  process.env.GRAMSCRAPER_KEY ||
+  'gs_eyJzdWIiOiI0NjM2OGY3ZC0yZDM3LTQ1MjktOWYyNi0zMTc2NjVkZTYwZTAiLCJraWQiOiI5NGJjODg5Zi02MWM2LTQyNjAtYjk1OC0yZWEzZmRjZTc5NWYiLCJpYXQiOjE3OTE2NTYyODA4NjYsInYiOjJ9.xpJJVoC03bDvJc29oYAIHgGlTF4egQOXFrdOxrlUz8w';
 const GRAMSCRAPER_BASE = 'https://gramscraper.com/api/instagram';
 
 /**
@@ -538,7 +540,7 @@ export async function POST(request) {
   try {
     // 1. Rate Limiting: 30 requests per minute per IP
     const clientIp = getClientIp(request);
-    const rateInfo = checkRateLimit(`download:${clientIp}`, 30, 60000);
+    const rateInfo = checkRateLimit(`download:${clientIp}`, 120, 60000);
     if (!rateInfo.success) {
       return rateLimitExceededResponse(rateInfo);
     }
@@ -570,8 +572,9 @@ export async function POST(request) {
       );
     }
 
+    const effectiveInput = validation.cleanValue || rawInput;
     // Strip query strings (?igsi=..., ?utm_source=...) and hashes for maximum scraper compatibility
-    const url = rawInput.startsWith('http') ? rawInput.split('?')[0].split('#')[0] : rawInput;
+    const url = effectiveInput.startsWith('http') ? effectiveInput.split('?')[0].split('#')[0] : effectiveInput;
 
     const tab = (body?.tab || '').toLowerCase();
 
@@ -615,26 +618,26 @@ export async function POST(request) {
             thumbnail: s.thumbnail || s.url,
             type: s.type,
           })),
-        });
+        }, { headers: corsHeaders });
       }
 
       if (storyRes.empty || (storyRes.success && storyRes.stories?.length === 0)) {
         return NextResponse.json(
           { error: 'No active stories found for this public account (stories expire in 24 hours).' },
-          { status: 404 }
+          { status: 404, headers: corsHeaders }
         );
       }
 
       if (storyRes.error === 'PRIVATE_ACCOUNT') {
         return NextResponse.json(
           { error: 'This account is private. Only public Stories can be downloaded.' },
-          { status: 403 }
+          { status: 403, headers: corsHeaders }
         );
       }
 
       return NextResponse.json(
         { error: 'Unable to extract public stories for this account at this time.' },
-        { status: 502 }
+        { status: 502, headers: corsHeaders }
       );
     }
 
@@ -659,7 +662,7 @@ export async function POST(request) {
           type: m.type,
         })),
         count: browserMedia.length,
-      });
+      }, { headers: corsHeaders });
     }
 
     // ── CASE C: yt-dlp Extractor (Multi-entry or Video Reel) ───────────────────
@@ -690,7 +693,7 @@ export async function POST(request) {
             author: info.uploader || info.channel || info.uploader_id || '',
             images: carouselImages,
             count: carouselImages.length,
-          });
+          }, { headers: corsHeaders });
         }
       }
 
@@ -707,7 +710,7 @@ export async function POST(request) {
           duration: info.duration || null,
           images: [{ url: info.url, thumbnail: info.thumbnail || info.url, type: 'video' }],
           count: 1,
-        });
+        }, { headers: corsHeaders });
       }
     }
 
@@ -715,7 +718,7 @@ export async function POST(request) {
     if (stderrLow.includes('login required') || stderrLow.includes('private video')) {
       return NextResponse.json(
         { error: 'This post is private or requires login. Only public content can be downloaded.' },
-        { status: 403 }
+        { status: 403, headers: corsHeaders }
       );
     }
 
@@ -738,7 +741,7 @@ export async function POST(request) {
           type: m.type,
         })),
         count: directMedia.length,
-      });
+      }, { headers: corsHeaders });
     }
 
     // ── CASE E: Single Photo Fallback via Instagram oEmbed ───────────────────
@@ -755,7 +758,7 @@ export async function POST(request) {
           author: oembed.author_name || '',
           images: [{ url: oembed.thumbnail_url, thumbnail: oembed.thumbnail_url, type: 'image' }],
           count: 1,
-        });
+        }, { headers: corsHeaders });
       }
     } catch (err) {
       console.warn('[oEmbed Post Error]:', err.message);

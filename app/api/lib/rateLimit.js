@@ -58,7 +58,10 @@ export function getClientIp(request) {
  * @param {number} windowMs Time window in milliseconds
  * @returns {{ success: boolean, limit: number, remaining: number, reset: number }}
  */
-export function checkRateLimit(key, limit = 30, windowMs = 60000) {
+export function checkRateLimit(key, limit = 120, windowMs = 60000) {
+  if (key.endsWith(':anonymous')) {
+    return { success: true, limit, remaining: limit, reset: Date.now() + windowMs };
+  }
   cleanupExpiredRecords();
 
   const now = Date.now();

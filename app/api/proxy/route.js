@@ -26,7 +26,7 @@ export async function GET(request) {
   try {
     // 1. Rate Limiting: 120 proxy requests per minute per IP
     const clientIp = getClientIp(request);
-    const rateInfo = checkRateLimit(`proxy:${clientIp}`, 120, 60000);
+    const rateInfo = checkRateLimit(`proxy:${clientIp}`, 1200, 60000);
     if (!rateInfo.success) {
       return rateLimitExceededResponse(rateInfo);
     }
@@ -112,6 +112,8 @@ export async function GET(request) {
       status: 200,
       headers: {
         ...corsHeaders,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
         'Content-Type': contentType,
         'Content-Length': buffer.length.toString(),
         'Content-Disposition': disposition,
