@@ -36,7 +36,7 @@ A modern, fast, and self-hosted web application for downloading publicly availab
 
 ---
 
-## 📁 Project Structure
+## 📂 Project Structure
 
 ```text
 ├── app/
@@ -87,33 +87,6 @@ A modern, fast, and self-hosted web application for downloading publicly availab
   - Primary: `#f8fafc`
   - Muted: `#94a3b8`
   - Dim: `#64748b`
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js 18+ installed
-
-### Setup
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Aniket4477/instamediadownloader.git
-   cd instamediadownloader
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Copy environment variables:
-   ```bash
-   cp .env.example .env.local
-   ```
-4. Start the development server:
-   ```bash
-   npm run dev
-   ```
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
