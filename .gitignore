@@ -1,4 +1,4 @@
-# dependencies
+﻿# dependencies
 /node_modules
 /.pnp
 .pnp.js
@@ -36,10 +36,18 @@ next-env.d.ts
 # Downloaded yt-dlp binary (generated during postinstall on Linux/Vercel)
 /bin/
 
-# Test scripts
+# Agent instructions (local only)
+CLAUDE.md
+AGENTS.md
+
+# Root duplicate media (actual assets are inside /public)
+/logo.png
+/logo2.png
+
+# Test & scratch scripts
 test-*.mjs
 test-*.js
 audit-live.js
 test-popular.js
-
-.vercel
+verify_security.mjs
+*.tmp

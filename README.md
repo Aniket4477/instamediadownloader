@@ -1,84 +1,38 @@
-# ✨ InstaDown — Instagram Media Downloader
+﻿# InstaDown - Instagram Media Downloader
 
-A modern, fast, and self-hosted **Next.js** web application to download public Instagram **Reels, Videos, Single Photos, Multi-Photo Carousels, and Stories**.
-
-100% Free · No API Keys · No Instagram Logins · No Subscriptions · Self-Hosted
+A modern, fast, and self-hosted web application for downloading publicly available Instagram media including Reels, Videos, Photos, Multi-Photo Carousels, and Stories.
 
 ---
 
-## 🚀 Key Features
+## 📌 What is This Project?
 
-- 🎬 **Reels & Video Posts**: Instant 1080p HD video download powered by self-hosted `yt-dlp`.
-- 🖼️ **Single Photos & Carousels**: Extracts all full-resolution images from multi-photo carousel posts with sequential **"Download All"** support.
-- 📖 **Public Stories (Single & Multi-Story Grid)**:
-  - Supports both exact **Story URLs** and public **@usernames**.
-  - Automatically extracts and displays **ALL active public stories** from an account.
-  - Interactive video playback with custom thumbnail posters and one-click download buttons.
-- ⚡ **Direct Stream Proxy (`/api/proxy`)**:
-  - Automatically unwraps direct Instagram CDN media URLs.
-  - Fixes cross-origin restrictions, enabling crisp previews and downloads with custom filenames.
-- 🌙 **Modern Glassmorphism UI**:
-  - 4 specialized media tabs (`Auto-Detect`, `Reel / Video`, `Post / Carousel`, `Story`).
-  - Dark-mode interface, responsive carousel grids, and photo lightbox modal.
+**InstaDown** provides an interface to view and download public Instagram media in original high quality without requiring Instagram account credentials, session cookies, or subscriptions.
 
 ---
 
-## 🛠️ Architecture & Tech Stack
+## ⚙️ How It Works
 
-| Layer | Technology | Purpose |
+1. **Input Submission**: The user submits a public Instagram URL (Post, Reel, Story) or a public username handle.
+2. **Server-Side Extraction**:
+   - The server validates the format and enforces strict SSRF and domain checks.
+   - A multi-tier extraction pipeline resolves the direct high-resolution media CDN streams.
+   - For multi-item carousels and active story reels, all individual media items are enumerated with thumbnails and direct links.
+3. **Secure Streaming & Download**:
+   - The media is routed through a streaming proxy (`/api/proxy`) that attaches proper MIME headers and content dispositions for seamless browser downloading.
+   - Rate limiting, strict CORS, and Content Security Policies prevent abuse.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology | Description |
 | :--- | :--- | :--- |
-| **Frontend** | Next.js 15 (App Router), React, Vanilla CSS | Glassmorphism UI, video player, carousel grid, lightbox |
-| **Reels / Videos** | Local `yt-dlp` Engine | High-speed direct MP4 extraction |
-| **Carousels / Photos** | Public oEmbed + Flat-playlist Sub-shortcodes | Multi-photo carousel extraction |
-| **Stories Engine** | Headless Chrome (`puppeteer-core`) | Real-time active public multi-story scraper & stream extractor |
-| **Proxy Gateway** | Next.js Edge / Node API Route (`/api/proxy`) | Instagram CDN streaming, attachment downloads, and CORS handling |
-
----
-
-## 📦 Getting Started
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or newer recommended)
-- Google Chrome installed on your machine (for headless story extraction)
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/Aniket4477/instamediadownloader.git
-   cd instamediadownloader
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-
-4. Open **[http://localhost:3000](http://localhost:3000)** in your browser.
-
----
-
-## 🎯 How to Use
-
-1. **Reels / Videos**:
-   - Switch to the **🎬 Reel / Video** tab.
-   - Paste a public Reel URL (e.g. `https://www.instagram.com/reel/DQEh5ZvDyL_/`).
-   - Click **Fetch Media** to play inline and download the MP4.
-
-2. **Photos & Carousels**:
-   - Switch to the **🖼️ Post / Carousel** tab.
-   - Paste a single photo or multi-photo post link (e.g. `https://www.instagram.com/p/DbpYI8gGOJI/`).
-   - Download individual images (`Image 1`, `Image 2`) or click **"Download All"** for the complete set.
-
-3. **Stories**:
-   - Switch to the **📖 Story** tab.
-   - Enter a public handle (e.g. `@harsh.aniketkumar` or `harsh.aniketkumar`) or a direct Story URL.
-   - All active stories published within the last 24 hours will load side-by-side in the story grid.
+| **Framework** | Next.js 16 (App Router) | Serverless API routes and server components |
+| **UI Library** | React 18 | Interactive tabs, modal lightboxes, media player |
+| **Styling** | Vanilla CSS | Custom responsive glassmorphism design system |
+| **Bundler** | Turbopack | Fast development and optimized production builds |
+| **Extraction Engine** | REST Pipelines & Headless Chromium | Multi-tier failover media extractors |
+| **Security Layer** | Custom Security Middleware | SSRF mitigation, IP rate limiting, strict CSP headers |
 
 ---
 
@@ -88,23 +42,81 @@ A modern, fast, and self-hosted **Next.js** web application to download public I
 ├── app/
 │   ├── api/
 │   │   ├── download/
-│   │   │   ├── route.js            # Unified media router (Reels, Posts, Carousels, Stories)
-│   │   │   └── storyExtractor.js   # Automated headless Chrome multi-story extractor
+│   │   │   ├── route.js          # Unified media extraction endpoint
+│   │   │   └── storyExtractor.js # Multi-tier Instagram story extraction pipeline
+│   │   ├── lib/
+│   │   │   ├── rateLimit.js      # Server-side sliding-window rate limiter
+│   │   │   └── security.js       # SSRF validation, allowed CDN domains, CORS
 │   │   └── proxy/
-│   │       └── route.js            # Direct Instagram CDN stream proxy with auto-unwrapping
-│   ├── globals.css                 # Dark-mode glassmorphic styling & responsive grid
-│   ├── layout.js                   # Root layout with SEO meta tags
-│   └── page.js                     # Interactive 4-tab UI with video player and grid
-├── bin/
-│   └── yt-dlp.exe                  # Self-hosted yt-dlp binary
-├── instagram-story-api/            # Standalone multi-provider Story API service
-├── next.config.mjs                 # Next.js configuration
-├── package.json                    # Project dependencies and scripts
-└── README.md                       # Project documentation
+│   │       └── route.js          # Secure media streaming and download gateway
+│   ├── globals.css               # Design system tokens and styling
+│   ├── layout.js                 # Root HTML layout and metadata
+│   └── page.js                   # Client application interface
+├── public/                       # Static public assets (logos, icons)
+├── scripts/                      # Build-time helper scripts
+├── next.config.mjs               # Next.js build configuration & security headers
+├── package.json                  # Dependencies and scripts
+└── README.md                     # Project documentation
 ```
+
+---
+
+## 🎨 Design System
+
+### 🔤 Typography & Fonts
+- **Primary Font**: `Plus Jakarta Sans` (Weights: 400, 500, 600, 700, 800)
+- **Secondary Font**: `Inter` (Weights: 400, 500, 600, 700)
+- **Fallback**: `system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+
+### 🎨 Color Palette
+- **Background**:
+  - Base Dark: `#07080d`
+  - Subtle Surface: `#0b0d14`
+- **Cards & Glassmorphism**:
+  - Card Fill: `rgba(16, 18, 27, 0.70)`
+  - Card Hover: `rgba(22, 25, 38, 0.85)`
+  - Border: `rgba(255, 255, 255, 0.08)`
+  - Border Hover: `rgba(255, 255, 255, 0.16)`
+- **Accents & Gradients**:
+  - Primary Gradient: `linear-gradient(135deg, #e11d74 0%, #9333ea 100%)`
+  - Hover Gradient: `linear-gradient(135deg, #f43f8e 0%, #a855f7 100%)`
+  - Accent Pink: `#e11d74`
+  - Accent Purple: `#9333ea`
+  - Tag / Highlight Purple: `#c084fc`
+- **Text**:
+  - Primary: `#f8fafc`
+  - Muted: `#94a3b8`
+  - Dim: `#64748b`
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 18+ installed
+
+### Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Aniket4477/instamediadownloader.git
+   cd instamediadownloader
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Copy environment variables:
+   ```bash
+   cp .env.example .env.local
+   ```
+4. Start the development server:
+   ```bash
+   npm run dev
+   ```
+5. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
 ## ⚖️ Disclaimer
 
-This tool is designed for educational and personal archival purposes only. It is strictly limited to publicly accessible content and does not bypass any access controls or private account settings. Not affiliated with, endorsed by, or associated with Instagram or Meta Platforms, Inc.
+This project is for educational and personal archival purposes only. It interacts strictly with publicly available web data and does not bypass private account restrictions or authentication barriers. Not affiliated with, endorsed by, or sponsored by Instagram or Meta Platforms, Inc.
