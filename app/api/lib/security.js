@@ -1,4 +1,4 @@
-﻿/**
+/**
  * app/api/lib/security.js
  *
  * Core defensive security utilities for Instagram Downloader Next.js API.
@@ -13,6 +13,7 @@ const ALLOWED_CDN_DOMAIN_PATTERNS = [
   /^(?:[a-zA-Z0-9-]+\.)*akamaihd\.net$/i,
   /^(?:[a-zA-Z0-9-]+\.)*facebook\.com$/i,
   /^(?:[a-zA-Z0-9-]+\.)*meta\.com$/i,
+  /^(?:[a-zA-Z0-9-]+\.)*brightdata\.com$/i,
 ];
 
 // IP detection patterns (IPv4, IPv6)

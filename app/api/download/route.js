@@ -246,6 +246,107 @@ function deduplicateMediaItems(items) {
  * Extracts ALL available items in a carousel post preserving direct MP4 and image streams.
  */
 // ============================================================================
+// Multi-API Post/Carousel Extractors (GramScraper + Bright Data Fallback)
+// Rotates keys and checks multiple providers to guarantee ALL carousel items
+// ============================================================================
+const BRIGHTDATA_KEYS = (process.env.BRIGHTDATA_KEYS || '')
+  .split(',')
+  .map((k) => k.trim())
+  .filter(Boolean);
+
+// Fallback pool of keys provided by user
+const DEFAULT_BRIGHTDATA_KEYS = [
+  '49d46125-2f85-4b07-adcb-f2e1d5ce7005',
+  '523d3f74-c8ae-41a0-81b1-e9409b77fdc7',
+  '9ec70a60-ff66-4d38-86e5-8cbff0b16a29',
+  '0c39bc6b-5b7c-4d8a-a6fd-4d7c8a81614a',
+  '691ea22c-8632-4c87-8a26-aad5c9185c69',
+];
+
+const ACTIVE_BRIGHTDATA_KEYS = BRIGHTDATA_KEYS.length > 0 ? BRIGHTDATA_KEYS : DEFAULT_BRIGHTDATA_KEYS;
+
+/**
+ * Bright Data Instagram Scraper API (Synchronous v3 /scrape)
+ * Fetches the post data including all carousel items (post_content array).
+ */
+async function extractViaBrightData(rawPostUrl) {
+  if (!ACTIVE_BRIGHTDATA_KEYS || ACTIVE_BRIGHTDATA_KEYS.length === 0) return [];
+
+  const postUrl = rawPostUrl.split('?')[0].split('#')[0];
+  const datasetId = 'gd_lk5ns7kz21pck8jpis'; // Bright Data Instagram Posts Dataset
+
+  for (const apiKey of ACTIVE_BRIGHTDATA_KEYS) {
+    try {
+      const endpoint = `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${datasetId}&format=json`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([{ url: postUrl }]),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!res.ok) {
+        console.warn(`[BrightData] HTTP ${res.status} for key ${apiKey.slice(0, 8)}...`);
+        continue; // Try next key
+      }
+
+      const data = await res.json();
+      const post = Array.isArray(data) ? data[0] : (data?.data?.[0] || data);
+      if (!post) continue;
+
+      const items = [];
+      const caption = post.description || post.caption || 'Instagram Post';
+      const author = post.user_posted || post.owner_username || '';
+
+      // Check post_content array (standard Bright Data carousel list)
+      const contentList = Array.isArray(post.post_content)
+        ? post.post_content
+        : (Array.isArray(post.carousel_media) ? post.carousel_media : (Array.isArray(post.images) ? post.images : []));
+
+      if (contentList && contentList.length > 0) {
+        for (const c of contentList) {
+          const mediaUrl = typeof c === 'string' ? c : (c.url || c.display_url || c.video_url || c.image_url);
+          if (!mediaUrl) continue;
+          const isVideo = (c.type === 'video') || mediaUrl.includes('.mp4');
+          items.push({
+            url: mediaUrl,
+            thumbnail: c.thumbnail || mediaUrl,
+            type: isVideo ? 'video' : 'image',
+            title: caption,
+            author: author,
+          });
+        }
+      } else {
+        // Single image / video fallback
+        const singleUrl = post.display_url || post.video_url || post.url;
+        if (singleUrl) {
+          const isVideo = post.content_type === 'Video' || (post.video_url && !post.display_url) || singleUrl.includes('.mp4');
+          items.push({
+            url: singleUrl,
+            thumbnail: post.display_url || singleUrl,
+            type: isVideo ? 'video' : 'image',
+            title: caption,
+            author: author,
+          });
+        }
+      }
+
+      if (items.length > 0) {
+        console.log(`[BrightData] Successfully extracted ${items.length} items with key ${apiKey.slice(0, 8)}...`);
+        return items;
+      }
+    } catch (err) {
+      console.warn(`[BrightData] Error with key ${apiKey.slice(0, 8)}...:`, err.message);
+    }
+  }
+
+  return [];
+}
+
+// ============================================================================
 // GramScraper API Extractor (Primary - Fast, no Puppeteer, direct CDN URLs)
 // API Key: GramScraper (gs_... token). Costs 1 credit per post lookup.
 // ============================================================================
@@ -641,12 +742,30 @@ export async function POST(request) {
       );
     }
 
-    // CASE B: GramScraper API (fast REST, no browser) ? Browser fallback
-    const gsMedia = await extractViaGramScraper(url);
-    const browserMedia = (gsMedia && gsMedia.length > 0) ? gsMedia : await extractPostViaBrowser(url);
-    if (browserMedia && browserMedia.length > 0) {
-      const isSingle = browserMedia.length === 1;
-      const firstItem = browserMedia[0];
+    // CASE B: Multi-API Post/Carousel Extractor with Fallbacks
+    // Tier 1: GramScraper API
+    let mediaItems = await extractViaGramScraper(url);
+
+    // If GramScraper returned empty, or only 1 item for what might be a carousel, try Bright Data
+    if (!mediaItems || mediaItems.length <= 1) {
+      console.log(`[Extractor] GramScraper returned ${mediaItems?.length || 0} item(s). Checking Bright Data for full carousel...`);
+      const bdMedia = await extractViaBrightData(url);
+      if (bdMedia && bdMedia.length > 0) {
+        // Prefer Bright Data if it found more items (e.g. multi-image carousel)
+        if (!mediaItems || bdMedia.length > mediaItems.length) {
+          mediaItems = bdMedia;
+        }
+      }
+    }
+
+    // Tier 3: Browser Extractor Fallback
+    if (!mediaItems || mediaItems.length === 0) {
+      mediaItems = await extractPostViaBrowser(url);
+    }
+
+    if (mediaItems && mediaItems.length > 0) {
+      const isSingle = mediaItems.length === 1;
+      const firstItem = mediaItems[0];
 
       return NextResponse.json({
         success: true,
@@ -656,12 +775,12 @@ export async function POST(request) {
         thumbnail: firstItem.thumbnail || firstItem.url,
         title: firstItem.title || 'Instagram Post',
         author: firstItem.author || '',
-        images: browserMedia.map((m) => ({
+        images: mediaItems.map((m) => ({
           url: m.url,
           thumbnail: m.thumbnail || m.url,
           type: m.type,
         })),
-        count: browserMedia.length,
+        count: mediaItems.length,
       }, { headers: corsHeaders });
     }
 
